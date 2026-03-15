@@ -1,0 +1,7 @@
+Binaries/
+Intermediate/
+Saved/
+*.log
+*.vcxproj
+*.sln
+.vs/
