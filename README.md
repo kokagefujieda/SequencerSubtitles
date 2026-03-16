@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/Logo_SequencerSubtitles.png" alt="Sequencer Subtitles" width="480">
+</p>
+
 # Sequencer Subtitles
 
 **Sequencer Subtitles** is a subtitle display plugin for Unreal Engine 5.
