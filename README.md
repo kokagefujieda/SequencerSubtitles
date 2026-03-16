@@ -3,9 +3,6 @@
 **Sequencer Subtitles** は Unreal Engine 5 向けの字幕・台詞表示プラグインです。
 Sequencer タイムラインに専用トラックを追加し、リアルタイムプレビュー付きで字幕を配置できます。
 
-**MIT ライセンスで無料配布しています。**
-このリポジトリから直接ダウンロードするか、Fab からも無料で入手できます。
-
 > **Fab からダウンロード**: [Sequencer Subtitles on Fab](https://www.fab.com/ja/listings/a5ee3c5a-6aee-4224-841e-2c68880325c8)
 
 ## 特徴
