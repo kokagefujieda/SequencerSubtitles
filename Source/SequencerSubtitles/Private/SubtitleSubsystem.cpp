@@ -1,6 +1,6 @@
 // Copyright 2026 kokage. All Rights Reserved.
 
-#include "DialogueSubsystem.h"
+#include "SubtitleSubsystem.h"
 #include "Engine/World.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/Engine.h"
@@ -27,7 +27,7 @@
 #include "Slate/SceneViewport.h"
 #endif
 
-void UDialogueSubsystem::EnsureSlateWidgets()
+void USubtitleSubsystem::EnsureSlateWidgets()
 {
 	if (WidgetOverlay.IsValid())
 	{
@@ -71,6 +71,12 @@ void UDialogueSubsystem::EnsureSlateWidgets()
 			TypewriterSizerBox.ToSharedRef()
 		];
 
+	// MessageWindowBox: optional fixed-height wrapper (height set in ApplyAppearance)
+	MessageWindowBox = SNew(SBox)
+		[
+			SubtitleBorder.ToSharedRef()
+		];
+
 	// --- Vertical layout: Speaker → Separator → Subtitle ---
 	ContentVerticalBox = SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
@@ -90,7 +96,7 @@ void UDialogueSubsystem::EnsureSlateWidgets()
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		[
-			SubtitleBorder.ToSharedRef()
+			MessageWindowBox.ToSharedRef()
 		];
 
 	WidgetOverlay = SNew(SOverlay)
@@ -105,13 +111,13 @@ void UDialogueSubsystem::EnsureSlateWidgets()
 	WidgetOverlay->SetVisibility(EVisibility::Hidden);
 
 	DPIScalerWidget = SNew(SDPIScaler)
-		.DPIScale_UObject(this, &UDialogueSubsystem::GetSubtitleDPIScale)
+		.DPIScale_UObject(this, &USubtitleSubsystem::GetSubtitleDPIScale)
 		[
 			WidgetOverlay.ToSharedRef()
 		];
 }
 
-void UDialogueSubsystem::AddToViewport()
+void USubtitleSubsystem::AddToViewport()
 {
 	if (bAddedToViewport)
 	{
@@ -150,7 +156,7 @@ void UDialogueSubsystem::AddToViewport()
 	}
 }
 
-void UDialogueSubsystem::RemoveFromViewport()
+void USubtitleSubsystem::RemoveFromViewport()
 {
 	if (!bAddedToViewport || !WidgetOverlay.IsValid())
 	{
@@ -182,7 +188,7 @@ void UDialogueSubsystem::RemoveFromViewport()
 	bAddedToViewport = false;
 }
 
-void UDialogueSubsystem::ApplySpeakerAndSeparator(const FDialogueAppearance& InAppearance, const FText& InSpeakerName)
+void USubtitleSubsystem::ApplySpeakerAndSeparator(const FSubtitleAppearance& InAppearance, const FText& InSpeakerName)
 {
 	const bool bHasSpeaker = !InSpeakerName.IsEmptyOrWhitespace();
 
@@ -243,14 +249,14 @@ void UDialogueSubsystem::ApplySpeakerAndSeparator(const FDialogueAppearance& InA
 	}
 }
 
-void UDialogueSubsystem::NotifyDialogueStarted(const FText& InDialogueText, FLinearColor InBarColor, const FDialogueAppearance& InAppearance, const FText& InSpeakerName)
+void USubtitleSubsystem::NotifySubtitleStarted(const FText& InSubtitleText, FLinearColor InBarColor, const FSubtitleAppearance& InAppearance, const FText& InSpeakerName)
 {
-	bIsDialogueActive = true;
-	CurrentDialogueText = InDialogueText;
+	bIsSubtitleActive = true;
+	CurrentSubtitleText = InSubtitleText;
 	CurrentSpeakerName = InSpeakerName;
 	CurrentAppearance = InAppearance;
 
-	// Reset typewriter state for each new dialogue
+	// Reset typewriter state for each new subtitle
 	bTypewriterActive    = false;
 	TypewriterFullWidth  = 0.f;
 	TypewriterFullHeight = 0.f;
@@ -277,18 +283,18 @@ void UDialogueSubsystem::NotifyDialogueStarted(const FText& InDialogueText, FLin
 	ApplySpeakerAndSeparator(CurrentAppearance, InSpeakerName);
 	if (SubtitleTextBlock.IsValid())
 	{
-		SubtitleTextBlock->SetText(InDialogueText);
+		SubtitleTextBlock->SetText(InSubtitleText);
 	}
 	WidgetOverlay->SetVisibility(EVisibility::SelfHitTestInvisible);
 	StartAnimation(InAppearance.EntranceType, InAppearance.EntranceDuration, false);
 
-	OnDialogueStarted.Broadcast(InDialogueText, InBarColor);
+	OnSubtitleStarted.Broadcast(InSubtitleText, InBarColor);
 }
 
-void UDialogueSubsystem::ShowMessage(const FText& Text, float Duration, ESubtitleEntranceType Animation, float AnimationDuration)
+void USubtitleSubsystem::ShowMessage(const FText& Text, float Duration, ESubtitleEntranceType Animation, float AnimationDuration)
 {
-	FDialogueAppearance Appearance;
-	// ShowMessage convenience default: larger than FDialogueAppearance default (24)
+	FSubtitleAppearance Appearance;
+	// ShowMessage convenience default: larger than FSubtitleAppearance default (24)
 	Appearance.FontSize = 50;
 	Appearance.TextColor = FLinearColor::White;
 	Appearance.BackgroundColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.5f);
@@ -301,7 +307,7 @@ void UDialogueSubsystem::ShowMessage(const FText& Text, float Duration, ESubtitl
 	ShowMessageEx(Text, Duration, Appearance);
 }
 
-void UDialogueSubsystem::ShowMessageEx(const FText& Text, float Duration, const FDialogueAppearance& Appearance)
+void USubtitleSubsystem::ShowMessageEx(const FText& Text, float Duration, const FSubtitleAppearance& Appearance)
 {
 	// Cancel any previous auto-hide timer
 	if (AutoHideTimerHandle.IsValid() && SubtitleBorder.IsValid())
@@ -313,7 +319,7 @@ void UDialogueSubsystem::ShowMessageEx(const FText& Text, float Duration, const 
 	bIsShowMessageActive = true;
 
 	// Reuse existing display pipeline
-	NotifyDialogueStarted(Text, FLinearColor::White, Appearance);
+	NotifySubtitleStarted(Text, FLinearColor::White, Appearance);
 
 	// Duration <= 0 means persistent display (until HideMessage is called)
 	if (Duration > 0.0f)
@@ -326,13 +332,13 @@ void UDialogueSubsystem::ShowMessageEx(const FText& Text, float Duration, const 
 		{
 			AutoHideTimerHandle = SubtitleBorder->RegisterActiveTimer(
 				0.0f,
-				FWidgetActiveTimerDelegate::CreateUObject(this, &UDialogueSubsystem::TickAutoHide)
+				FWidgetActiveTimerDelegate::CreateUObject(this, &USubtitleSubsystem::TickAutoHide)
 			);
 		}
 	}
 }
 
-void UDialogueSubsystem::HideMessage()
+void USubtitleSubsystem::HideMessage()
 {
 	if (!bIsShowMessageActive)
 	{
@@ -347,10 +353,10 @@ void UDialogueSubsystem::HideMessage()
 		AutoHideTimerHandle.Reset();
 	}
 
-	NotifyDialogueEnded();
+	NotifySubtitleEnded();
 }
 
-EActiveTimerReturnType UDialogueSubsystem::TickAutoHide(double InCurrentTime, float InDeltaTime)
+EActiveTimerReturnType USubtitleSubsystem::TickAutoHide(double InCurrentTime, float InDeltaTime)
 {
 	if (!bIsShowMessageActive)
 	{
@@ -361,18 +367,18 @@ EActiveTimerReturnType UDialogueSubsystem::TickAutoHide(double InCurrentTime, fl
 	if (AutoHideRemaining <= 0.0f)
 	{
 		bIsShowMessageActive = false;
-		NotifyDialogueEnded();
+		NotifySubtitleEnded();
 		return EActiveTimerReturnType::Stop;
 	}
 
 	return EActiveTimerReturnType::Continue;
 }
 
-void UDialogueSubsystem::UpdateTypewriterProgress(int32 VisibleCharCount)
+void USubtitleSubsystem::UpdateTypewriterProgress(int32 VisibleCharCount)
 {
-	if (!SubtitleTextBlock.IsValid() || !bIsDialogueActive) { return; }
+	if (!SubtitleTextBlock.IsValid() || !bIsSubtitleActive) { return; }
 
-	const FString FullStr    = CurrentDialogueText.ToString();
+	const FString FullStr    = CurrentSubtitleText.ToString();
 	const int32   TotalChars = FullStr.Len();
 	const int32   ShowChars  = FMath::Clamp(VisibleCharCount, 0, TotalChars);
 
@@ -487,11 +493,11 @@ void UDialogueSubsystem::UpdateTypewriterProgress(int32 VisibleCharCount)
 		CachedTypewriterSound = nullptr;
 		// Keep bTypewriterActive, SBox overrides, and HAlign unchanged
 		// so the text stays in the exact same position.
-		// They will be reset in NotifyDialogueStarted / NotifyDialogueEnded.
+		// They will be reset in NotifySubtitleStarted / NotifySubtitleEnded.
 	}
 }
 
-void UDialogueSubsystem::PlayTypewriterSound(int32 CurrentCharIndex)
+void USubtitleSubsystem::PlayTypewriterSound(int32 CurrentCharIndex)
 {
 	if (!CachedTypewriterSound || CurrentCharIndex <= LastSoundCharIndex) { return; }
 
@@ -514,14 +520,14 @@ void UDialogueSubsystem::PlayTypewriterSound(int32 CurrentCharIndex)
 	LastSoundPlayTime  = Now;
 }
 
-void UDialogueSubsystem::NotifyDialogueEnded()
+void USubtitleSubsystem::NotifySubtitleEnded()
 {
-	bIsDialogueActive = false;
-	CurrentDialogueText = FText::GetEmpty();
+	bIsSubtitleActive = false;
+	CurrentSubtitleText = FText::GetEmpty();
 
 	if (!WidgetOverlay.IsValid())
 	{
-		OnDialogueEnded.Broadcast();
+		OnSubtitleEnded.Broadcast();
 		return;
 	}
 
@@ -537,15 +543,15 @@ void UDialogueSubsystem::NotifyDialogueEnded()
 		WidgetOverlay->SetVisibility(EVisibility::Hidden);
 	}
 
-	OnDialogueEnded.Broadcast();
+	OnSubtitleEnded.Broadcast();
 }
 
-bool UDialogueSubsystem::ShouldCreateSubsystem(UObject* Outer) const
+bool USubtitleSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
 	return !IsRunningDedicatedServer();
 }
 
-void UDialogueSubsystem::Deinitialize()
+void USubtitleSubsystem::Deinitialize()
 {
 	bAnimating = false;
 	if (AnimTimerHandle.IsValid() && SubtitleBorder.IsValid())
@@ -571,6 +577,7 @@ void UDialogueSubsystem::Deinitialize()
 	SubtitleTextBlock.Reset();
 	TypewriterSizerBox.Reset();
 	SubtitleBorder.Reset();
+	MessageWindowBox.Reset();
 	OverlaySlot = nullptr;
 	bTypewriterActive    = false;
 	TypewriterFullWidth  = 0.f;
@@ -585,7 +592,7 @@ void UDialogueSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-void UDialogueSubsystem::ApplyAppearance(const FDialogueAppearance& InAppearance)
+void USubtitleSubsystem::ApplyAppearance(const FSubtitleAppearance& InAppearance)
 {
 	if (OverlaySlot)
 	{
@@ -608,6 +615,18 @@ void UDialogueSubsystem::ApplyAppearance(const FDialogueAppearance& InAppearance
 	if (SubtitleBorder.IsValid())
 	{
 		SubtitleBorder->SetBorderBackgroundColor(InAppearance.BackgroundColor);
+	}
+
+	if (MessageWindowBox.IsValid())
+	{
+		if (InAppearance.MessageWindowHeight > 0.0f)
+		{
+			MessageWindowBox->SetHeightOverride(InAppearance.MessageWindowHeight);
+		}
+		else
+		{
+			MessageWindowBox->SetHeightOverride(FOptionalSize());
+		}
 	}
 
 	if (SubtitleTextBlock.IsValid())
@@ -644,7 +663,7 @@ void UDialogueSubsystem::ApplyAppearance(const FDialogueAppearance& InAppearance
 	}
 }
 
-void UDialogueSubsystem::StartAnimation(ESubtitleEntranceType InType, float InDuration, bool bReverse)
+void USubtitleSubsystem::StartAnimation(ESubtitleEntranceType InType, float InDuration, bool bReverse)
 {
 	if (!SubtitleBorder.IsValid())
 	{
@@ -716,11 +735,11 @@ void UDialogueSubsystem::StartAnimation(ESubtitleEntranceType InType, float InDu
 
 	AnimTimerHandle = SubtitleBorder->RegisterActiveTimer(
 		0.0f,
-		FWidgetActiveTimerDelegate::CreateUObject(this, &UDialogueSubsystem::TickAnimation)
+		FWidgetActiveTimerDelegate::CreateUObject(this, &USubtitleSubsystem::TickAnimation)
 	);
 }
 
-void UDialogueSubsystem::ApplyAnimationAlpha(float EasedAlpha)
+void USubtitleSubsystem::ApplyAnimationAlpha(float EasedAlpha)
 {
 	if (!SubtitleBorder.IsValid())
 	{
@@ -757,7 +776,7 @@ void UDialogueSubsystem::ApplyAnimationAlpha(float EasedAlpha)
 	}
 }
 
-EActiveTimerReturnType UDialogueSubsystem::TickAnimation(double InCurrentTime, float InDeltaTime)
+EActiveTimerReturnType USubtitleSubsystem::TickAnimation(double InCurrentTime, float InDeltaTime)
 {
 	if (!bAnimating || !SubtitleBorder.IsValid())
 	{
@@ -798,7 +817,7 @@ EActiveTimerReturnType UDialogueSubsystem::TickAnimation(double InCurrentTime, f
 	return EActiveTimerReturnType::Continue;
 }
 
-float UDialogueSubsystem::GetSubtitleDPIScale() const
+float USubtitleSubsystem::GetSubtitleDPIScale() const
 {
 #if WITH_EDITOR
 	if (bIsEditorViewport && FModuleManager::Get().IsModuleLoaded("LevelEditor"))

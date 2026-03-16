@@ -1,8 +1,8 @@
 // Copyright 2026 kokage. All Rights Reserved.
 
-#include "DialogueSettings.h"
+#include "SubtitleSettings.h"
 
-UDialogueSettings::UDialogueSettings()
+USubtitleSettings::USubtitleSettings()
 {
 	CategoryName = TEXT("Plugins");
 	SectionName = TEXT("Sequencer Subtitles");

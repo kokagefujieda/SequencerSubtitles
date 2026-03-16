@@ -14,8 +14,8 @@
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
-	"EngineVersion": "5.7.0",
-	"Installed": false,
+	"EngineVersion": "5.5.0",
+	"Installed": true,
 	"Modules": [
 		{
 			"Name": "SequencerSubtitles",

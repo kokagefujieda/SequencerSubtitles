@@ -4,31 +4,31 @@
 
 #include "CoreMinimal.h"
 #include "MovieSceneSection.h"
-#include "DialogueSettings.h"
-#include "DialogueSection.generated.h"
+#include "SubtitleSettings.h"
+#include "SubtitleSection.generated.h"
 
-/** Single dialogue section on the Sequencer timeline. */
+/** Single subtitle section on the Sequencer timeline. */
 UCLASS()
-class SEQUENCERSUBTITLES_API UMovieSceneDialogueSection : public UMovieSceneSection
+class SEQUENCERSUBTITLES_API UMovieSceneSeqSubtitleSection : public UMovieSceneSection
 {
 	GENERATED_BODY()
 
 public:
-	UMovieSceneDialogueSection();
+	UMovieSceneSeqSubtitleSection();
 
 	/** Override the track-level speaker name for this section only. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dialogue")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle")
 	bool bOverrideSpeakerName = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dialogue",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle",
 		meta = (EditCondition = "bOverrideSpeakerName"))
 	FText SpeakerNameOverride;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dialogue",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle",
 		meta = (MultiLine = "true"))
-	FText DialogueText;
+	FText SubtitleText;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dialogue")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle")
 	FLinearColor BarColor;
 
 	/**
@@ -36,14 +36,14 @@ public:
 	 * If the section is shorter than the time needed to reveal all characters,
 	 * the text is forced to complete by the section end.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dialogue")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle")
 	bool bTypewriterEffect = false;
 
 	/**
 	 * Seconds between each character reveal (typewriter speed).
 	 * Default 0.1 = 10 characters per second.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dialogue",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle",
 		meta = (EditCondition = "bTypewriterEffect", ClampMin = "0.01", UIMin = "0.01"))
 	float TypewriterCharInterval = 0.1f;
 
@@ -52,10 +52,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
 		meta = (EditCondition = "bOverrideAppearance", ShowOnlyInnerProperties))
-	FDialogueAppearance AppearanceOverride;
+	FSubtitleAppearance AppearanceOverride;
 
 	FORCEINLINE FText GetDisplayText() const
 	{
-		return DialogueText.IsEmptyOrWhitespace() ? NSLOCTEXT("SequencerSubtitles", "EmptyDialogue", "(Empty)") : DialogueText;
+		return SubtitleText.IsEmptyOrWhitespace() ? NSLOCTEXT("SequencerSubtitles", "EmptySubtitle", "(Empty)") : SubtitleText;
 	}
 };

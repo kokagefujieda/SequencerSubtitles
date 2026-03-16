@@ -6,14 +6,14 @@
 #include "MovieSceneTrackEditor.h"
 #include "ISequencerSection.h"
 
-class UMovieSceneDialogueTrack;
-class UMovieSceneDialogueSection;
+class UMovieSceneSubtitleTrack;
+class UMovieSceneSeqSubtitleSection;
 
-/** Section UI: bar background + dialogue text on timeline. */
-class FDialogueSectionUI : public FSequencerSection
+/** Section UI: bar background + subtitle text on timeline. */
+class FSubtitleSectionUI : public FSequencerSection
 {
 public:
-	FDialogueSectionUI(UMovieSceneSection& InSection);
+	FSubtitleSectionUI(UMovieSceneSection& InSection);
 
 	virtual int32 OnPaintSection(FSequencerSectionPainter& Painter) const override;
 	virtual FText GetSectionTitle() const override;
@@ -26,14 +26,16 @@ public:
 };
 
 /** Track editor: menu registration + section creation. */
-class FDialogueTrackEditor : public FMovieSceneTrackEditor
+class FSubtitleTrackEditor : public FMovieSceneTrackEditor
 {
 public:
 	static TSharedRef<ISequencerTrackEditor> CreateTrackEditor(TSharedRef<ISequencer> OwningSequencer);
 
-	FDialogueTrackEditor(TSharedRef<ISequencer> InSequencer);
+	FSubtitleTrackEditor(TSharedRef<ISequencer> InSequencer);
 
+#if ENGINE_MINOR_VERSION >= 6
 	virtual FText GetDisplayName() const override;
+#endif
 	virtual bool SupportsType(TSubclassOf<UMovieSceneTrack> TrackClass) const override;
 	virtual TSharedRef<ISequencerSection> MakeSectionInterface(
 		UMovieSceneSection& SectionObject,
@@ -47,6 +49,6 @@ public:
 	virtual void BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track) override;
 
 private:
-	void HandleAddDialogueTrack();
+	void HandleAddSubtitleTrack();
 	void AddNewSectionToTrack(UMovieSceneTrack* Track);
 };

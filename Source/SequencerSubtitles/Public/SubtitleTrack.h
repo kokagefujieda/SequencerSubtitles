@@ -5,19 +5,19 @@
 #include "CoreMinimal.h"
 #include "MovieSceneNameableTrack.h"
 #include "Compilation/IMovieSceneTrackTemplateProducer.h"
-#include "DialogueSettings.h"
-#include "DialogueTrack.generated.h"
+#include "SubtitleSettings.h"
+#include "SubtitleTrack.generated.h"
 
-/** Sequencer track managing dialogue sections with per-track appearance settings. */
+/** Sequencer track managing subtitle sections with per-track appearance settings. */
 UCLASS(meta=(DisplayName="Subtitle Track"))
-class SEQUENCERSUBTITLES_API UMovieSceneDialogueTrack
+class SEQUENCERSUBTITLES_API UMovieSceneSubtitleTrack
 	: public UMovieSceneNameableTrack
 	, public IMovieSceneTrackTemplateProducer
 {
 	GENERATED_BODY()
 
 public:
-	UMovieSceneDialogueTrack();
+	UMovieSceneSubtitleTrack();
 
 	/**
 	 * Speaker name for this track. Defaults to the track display name.
@@ -35,7 +35,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
 		meta = (ShowOnlyInnerProperties))
-	FDialogueAppearance Appearance;
+	FSubtitleAppearance Appearance;
 
 	// UMovieSceneTrack interface
 	virtual bool IsEmpty() const override;

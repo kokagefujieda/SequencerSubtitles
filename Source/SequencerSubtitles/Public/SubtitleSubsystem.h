@@ -4,38 +4,38 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "DialogueSettings.h"
+#include "SubtitleSettings.h"
 #include "Widgets/SOverlay.h"
-#include "DialogueSubsystem.generated.h"
+#include "SubtitleSubsystem.generated.h"
 
 class STextBlock;
 class SBorder;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
-	FOnDialogueStarted,
-	const FText&, DialogueText,
+	FOnSubtitleStarted,
+	const FText&, SubtitleText,
 	FLinearColor, BarColor
 );
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDialogueEnded);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSubtitleEnded);
 
-/** Broadcasts dialogue start/end events from Sequencer evaluation to UI widgets. */
+/** Broadcasts subtitle start/end events from Sequencer evaluation to UI widgets. */
 UCLASS()
-class SEQUENCERSUBTITLES_API UDialogueSubsystem : public UWorldSubsystem
+class SEQUENCERSUBTITLES_API USubtitleSubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
 
 public:
 	UPROPERTY()
-	FOnDialogueStarted OnDialogueStarted;
+	FOnSubtitleStarted OnSubtitleStarted;
 
 	UPROPERTY()
-	FOnDialogueEnded OnDialogueEnded;
+	FOnSubtitleEnded OnSubtitleEnded;
 
-	void NotifyDialogueStarted(const FText& InDialogueText, FLinearColor InBarColor, const FDialogueAppearance& InAppearance, const FText& InSpeakerName = FText::GetEmpty());
+	void NotifySubtitleStarted(const FText& InSubtitleText, FLinearColor InBarColor, const FSubtitleAppearance& InAppearance, const FText& InSpeakerName = FText::GetEmpty());
 
 	UFUNCTION()
-	void NotifyDialogueEnded();
+	void NotifySubtitleEnded();
 
 	/** Update the number of visible characters for typewriter effect. */
 	void UpdateTypewriterProgress(int32 VisibleCharCount);
@@ -54,7 +54,7 @@ public:
 	/** Display a message with full appearance control. Auto-hides after Duration seconds (real time).
 	 *  If Duration <= 0, the message stays visible until HideMessage() is called. */
 	UFUNCTION()
-	void ShowMessageEx(const FText& Text, float Duration, const FDialogueAppearance& Appearance);
+	void ShowMessageEx(const FText& Text, float Duration, const FSubtitleAppearance& Appearance);
 
 	/** Manually dismiss the current ShowMessage display. No-op if not active. */
 	UFUNCTION()
@@ -65,25 +65,25 @@ public:
 	virtual void Deinitialize() override;
 
 	UPROPERTY()
-	bool bIsDialogueActive = false;
+	bool bIsSubtitleActive = false;
 
 	UPROPERTY()
-	FText CurrentDialogueText;
+	FText CurrentSubtitleText;
 
 	UPROPERTY()
-	FDialogueAppearance CurrentAppearance;
+	FSubtitleAppearance CurrentAppearance;
 
 private:
 	void EnsureSlateWidgets();
 	void AddToViewport();
 	void RemoveFromViewport();
-	void ApplyAppearance(const FDialogueAppearance& InAppearance);
+	void ApplyAppearance(const FSubtitleAppearance& InAppearance);
 	float GetSubtitleDPIScale() const;
 	void StartAnimation(ESubtitleEntranceType InType, float InDuration, bool bReverse);
 	EActiveTimerReturnType TickAnimation(double InCurrentTime, float InDeltaTime);
 	void ApplyAnimationAlpha(float EasedAlpha);
 
-	void ApplySpeakerAndSeparator(const FDialogueAppearance& InAppearance, const FText& InSpeakerName);
+	void ApplySpeakerAndSeparator(const FSubtitleAppearance& InAppearance, const FText& InSpeakerName);
 
 	TSharedPtr<SOverlay>         WidgetOverlay;
 	TSharedPtr<class SDPIScaler> DPIScalerWidget;
@@ -93,6 +93,7 @@ private:
 	TSharedPtr<SBorder>          SeparatorLineBorder;
 	TSharedPtr<STextBlock>       SubtitleTextBlock;
 	TSharedPtr<SBorder>          SubtitleBorder;
+	TSharedPtr<class SBox>       MessageWindowBox;
 	TSharedPtr<class SBox>       TypewriterSizerBox;
 	SOverlay::FOverlaySlot*      OverlaySlot = nullptr;
 

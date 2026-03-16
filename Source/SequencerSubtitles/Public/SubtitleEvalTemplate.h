@@ -4,29 +4,29 @@
 
 #include "CoreMinimal.h"
 #include "Evaluation/MovieSceneEvalTemplate.h"
-#include "DialogueSettings.h"
-#include "DialogueEvalTemplate.generated.h"
+#include "SubtitleSettings.h"
+#include "SubtitleEvalTemplate.generated.h"
 
-/** Runtime evaluation template for dialogue sections. */
+/** Runtime evaluation template for subtitle sections. */
 USTRUCT()
-struct SEQUENCERSUBTITLES_API FDialogueEvalTemplate : public FMovieSceneEvalTemplate
+struct SEQUENCERSUBTITLES_API FSubtitleEvalTemplate : public FMovieSceneEvalTemplate
 {
 	GENERATED_BODY()
 
-	FDialogueEvalTemplate() = default;
-	explicit FDialogueEvalTemplate(const class UMovieSceneDialogueSection& InSection);
+	FSubtitleEvalTemplate() = default;
+	explicit FSubtitleEvalTemplate(const class UMovieSceneSeqSubtitleSection& InSection);
 
 	UPROPERTY()
 	FText SpeakerName;
 
 	UPROPERTY()
-	FText DialogueText;
+	FText SubtitleText;
 
 	UPROPERTY()
 	FLinearColor BarColor;
 
 	UPROPERTY()
-	FDialogueAppearance Appearance;
+	FSubtitleAppearance Appearance;
 
 	UPROPERTY()
 	bool bTypewriterEffect = false;

@@ -7,7 +7,7 @@
 #include "Sound/SoundBase.h"
 #include "Engine/Texture2D.h"
 #include "Engine/DeveloperSettings.h"
-#include "DialogueSettings.generated.h"
+#include "SubtitleSettings.generated.h"
 
 /** Vertical anchor for subtitle placement. */
 UENUM(BlueprintType)
@@ -43,7 +43,7 @@ enum class ESubtitleTextAlignment : uint8
 
 /** Per-track / per-section subtitle visual configuration. */
 USTRUCT(BlueprintType)
-struct SEQUENCERSUBTITLES_API FDialogueAppearance
+struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 {
 	GENERATED_BODY()
 
@@ -132,6 +132,16 @@ struct SEQUENCERSUBTITLES_API FDialogueAppearance
 		meta = (EditCondition = "bShowSeparatorLine && !bUseLineImage", ClampMin = "1", ClampMax = "8"))
 	float SeparatorLineThickness = 1.0f;
 
+	/**
+	 * Fixed height of the message window in pixels (before DPI scaling).
+	 * 0 = auto-size (expands with text).
+	 * Set to a positive value (e.g. 120) to fix the window height so the
+	 * speaker name always appears at the same screen position.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
+		meta = (ClampMin = "0", UIMin = "0"))
+	float MessageWindowHeight = 120.0f;
+
 	/** When true, exit animation uses ExitType/ExitDuration instead of reversing EntranceType. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
 	bool bOverrideExitAnimation = false;
@@ -159,10 +169,10 @@ struct SEQUENCERSUBTITLES_API FDialogueAppearance
 
 /** Project-wide settings for the Sequencer Subtitles plugin. */
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="Sequencer Subtitles"))
-class SEQUENCERSUBTITLES_API UDialogueSettings : public UDeveloperSettings
+class SEQUENCERSUBTITLES_API USubtitleSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
-	UDialogueSettings();
+	USubtitleSettings();
 };

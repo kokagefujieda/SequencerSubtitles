@@ -1,28 +1,28 @@
 // Copyright 2026 kokage. All Rights Reserved.
 
-#include "DialogueEvalTemplate.h"
-#include "DialogueSection.h"
-#include "DialogueTrack.h"
+#include "SubtitleEvalTemplate.h"
+#include "SubtitleSection.h"
+#include "SubtitleTrack.h"
 #include "MovieScene.h"
-#include "DialogueSubsystem.h"
+#include "SubtitleSubsystem.h"
 #include "IMovieScenePlayer.h"
 #include "MovieSceneExecutionToken.h"
 #include "Engine/World.h"
 
-/** Execution token: notifies UDialogueSubsystem on game thread. */
-struct FDialogueExecutionToken : IMovieSceneExecutionToken
+/** Execution token: notifies USubtitleSubsystem on game thread. */
+struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 {
 	FText         SpeakerName;
-	FText         DialogueText;
+	FText         SubtitleText;
 	FLinearColor  Color;
-	FDialogueAppearance Appearance;
+	FSubtitleAppearance Appearance;
 	/** -1 = show full text; >= 0 = typewriter: show this many characters. */
 	int32         VisibleCharCount = -1;
 
-	FDialogueExecutionToken(const FText& InSpeakerName, const FText& InText, FLinearColor InColor,
-		const FDialogueAppearance& InAppearance, int32 InVisibleCharCount)
+	FSubtitleExecutionToken(const FText& InSpeakerName, const FText& InText, FLinearColor InColor,
+		const FSubtitleAppearance& InAppearance, int32 InVisibleCharCount)
 		: SpeakerName(InSpeakerName)
-		, DialogueText(InText)
+		, SubtitleText(InText)
 		, Color(InColor)
 		, Appearance(InAppearance)
 		, VisibleCharCount(InVisibleCharCount)
@@ -37,11 +37,11 @@ struct FDialogueExecutionToken : IMovieSceneExecutionToken
 		UWorld* World = PlaybackContext->GetWorld();
 		if (!World) { return; }
 
-		UDialogueSubsystem* Subsystem = World->GetSubsystem<UDialogueSubsystem>();
+		USubtitleSubsystem* Subsystem = World->GetSubsystem<USubtitleSubsystem>();
 		if (!Subsystem) { return; }
 
-		// Already showing this dialogue
-		if (Subsystem->bIsDialogueActive && Subsystem->CurrentDialogueText.EqualTo(DialogueText))
+		// Already showing this subtitle
+		if (Subsystem->bIsSubtitleActive && Subsystem->CurrentSubtitleText.EqualTo(SubtitleText))
 		{
 			// For typewriter: update visible character count every frame
 			if (VisibleCharCount >= 0)
@@ -51,8 +51,8 @@ struct FDialogueExecutionToken : IMovieSceneExecutionToken
 			return;
 		}
 
-		// New dialogue — start it
-		Subsystem->NotifyDialogueStarted(DialogueText, Color, Appearance, SpeakerName);
+		// New subtitle — start it
+		Subsystem->NotifySubtitleStarted(SubtitleText, Color, Appearance, SpeakerName);
 
 		// For typewriter: override initial display immediately (before Slate renders)
 		if (VisibleCharCount >= 0)
@@ -62,12 +62,12 @@ struct FDialogueExecutionToken : IMovieSceneExecutionToken
 	}
 };
 
-FDialogueEvalTemplate::FDialogueEvalTemplate(const UMovieSceneDialogueSection& InSection)
+FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection& InSection)
 {
-	DialogueText = InSection.DialogueText;
+	SubtitleText = InSection.SubtitleText;
 	BarColor     = InSection.BarColor;
 
-	const UMovieSceneDialogueTrack* Track = InSection.GetTypedOuter<UMovieSceneDialogueTrack>();
+	const UMovieSceneSubtitleTrack* Track = InSection.GetTypedOuter<UMovieSceneSubtitleTrack>();
 
 	// Speaker name: Section override → Track setting → Track display name
 	if (InSection.bOverrideSpeakerName && !InSection.SpeakerNameOverride.IsEmptyOrWhitespace())
@@ -105,12 +105,12 @@ FDialogueEvalTemplate::FDialogueEvalTemplate(const UMovieSceneDialogueSection& I
 	}
 }
 
-void FDialogueEvalTemplate::SetupOverrides()
+void FSubtitleEvalTemplate::SetupOverrides()
 {
 	EnableOverrides(RequiresTearDownFlag);
 }
 
-void FDialogueEvalTemplate::TearDown(FPersistentEvaluationData& PersistentData, IMovieScenePlayer& Player) const
+void FSubtitleEvalTemplate::TearDown(FPersistentEvaluationData& PersistentData, IMovieScenePlayer& Player) const
 {
 	UObject* PlaybackContext = Player.GetPlaybackContext();
 	if (!PlaybackContext) { return; }
@@ -118,16 +118,16 @@ void FDialogueEvalTemplate::TearDown(FPersistentEvaluationData& PersistentData, 
 	UWorld* World = PlaybackContext->GetWorld();
 	if (!World) { return; }
 
-	UDialogueSubsystem* Subsystem = World->GetSubsystem<UDialogueSubsystem>();
+	USubtitleSubsystem* Subsystem = World->GetSubsystem<USubtitleSubsystem>();
 	if (!Subsystem) { return; }
 
-	if (Subsystem->bIsDialogueActive && Subsystem->CurrentDialogueText.EqualTo(DialogueText))
+	if (Subsystem->bIsSubtitleActive && Subsystem->CurrentSubtitleText.EqualTo(SubtitleText))
 	{
-		Subsystem->NotifyDialogueEnded();
+		Subsystem->NotifySubtitleEnded();
 	}
 }
 
-void FDialogueEvalTemplate::Evaluate(
+void FSubtitleEvalTemplate::Evaluate(
 	const FMovieSceneEvaluationOperand& Operand,
 	const FMovieSceneContext& Context,
 	const FPersistentEvaluationData& PersistentData,
@@ -141,7 +141,7 @@ void FDialogueEvalTemplate::Evaluate(
 		if (SectionDuration > 0)
 		{
 			const int32  Elapsed     = Context.GetTime().GetFrame().Value - TypewriterSectionStart.Value;
-			const int32  TotalChars  = DialogueText.ToString().Len();
+			const int32  TotalChars  = SubtitleText.ToString().Len();
 
 			// Interval-based: 0.1 sec/char (or user-defined)
 			const double TicksPerSec = TypewriterTickResolution.AsDecimal();
@@ -157,5 +157,5 @@ void FDialogueEvalTemplate::Evaluate(
 		}
 	}
 
-	ExecutionTokens.Add(FDialogueExecutionToken(SpeakerName, DialogueText, BarColor, Appearance, VisibleCharCount));
+	ExecutionTokens.Add(FSubtitleExecutionToken(SpeakerName, SubtitleText, BarColor, Appearance, VisibleCharCount));
 }
