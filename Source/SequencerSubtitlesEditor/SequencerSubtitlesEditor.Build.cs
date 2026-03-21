@@ -23,6 +23,7 @@ public class SequencerSubtitlesEditor : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+				"ApplicationCore",
 				"Sequencer",
 				"SequencerCore",
 				"MovieScene",

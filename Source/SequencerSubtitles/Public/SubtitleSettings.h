@@ -18,6 +18,15 @@ enum class ESubtitleVerticalPosition : uint8
 	Bottom UMETA(DisplayName = "Bottom"),
 };
 
+/** Horizontal anchor for subtitle placement. */
+UENUM(BlueprintType)
+enum class ESubtitleHorizontalPosition : uint8
+{
+	Left   UMETA(DisplayName = "Left"),
+	Center UMETA(DisplayName = "Center"),
+	Right  UMETA(DisplayName = "Right"),
+};
+
 /** Entrance animation type for subtitle appearance. */
 UENUM(BlueprintType)
 enum class ESubtitleEntranceType : uint8
@@ -64,6 +73,9 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
 	ESubtitleVerticalPosition VerticalPosition = ESubtitleVerticalPosition::Bottom;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	ESubtitleHorizontalPosition HorizontalPosition = ESubtitleHorizontalPosition::Center;
+
 	/** Horizontal alignment of the subtitle text. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
 	ESubtitleTextAlignment TextAlignment = ESubtitleTextAlignment::Center;
@@ -95,6 +107,15 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Typewriter",
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 MaxLinesPerPage = 2;
+
+	/**
+	 * Maximum characters per line before automatic line wrapping.
+	 * When the subtitle text exceeds this on any single line, a line break is
+	 * inserted at the last fitting character. 0 = no limit (rely on auto-wrap).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
+		meta = (ClampMin = "0", UIMin = "0"))
+	int32 MaxCharsPerLine = 0;
 
 	// ---- Speaker Name ----
 
@@ -175,4 +196,14 @@ class SEQUENCERSUBTITLES_API USubtitleSettings : public UDeveloperSettings
 
 public:
 	USubtitleSettings();
+
+	/** Default duration (in seconds) for new subtitle sections. */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor",
+		meta = (ClampMin = "0.5", ClampMax = "30.0", UIMin = "0.5", UIMax = "10.0"))
+	float DefaultSectionDuration = 3.0f;
+
+	/** Maximum duration (in seconds) when auto-sizing to fill gap before next section. */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor",
+		meta = (ClampMin = "0.5", ClampMax = "60.0", UIMin = "1.0", UIMax = "15.0"))
+	float MaxDefaultSectionDuration = 5.0f;
 };

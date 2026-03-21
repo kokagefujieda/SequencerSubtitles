@@ -23,7 +23,7 @@ struct SEQUENCERSUBTITLES_API FSubtitleEvalTemplate : public FMovieSceneEvalTemp
 	FText SubtitleText;
 
 	UPROPERTY()
-	FLinearColor BarColor;
+	FLinearColor BarColor = FLinearColor::Black;
 
 	UPROPERTY()
 	FSubtitleAppearance Appearance;

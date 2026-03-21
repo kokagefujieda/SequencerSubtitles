@@ -3,11 +3,15 @@
 #include "SubtitleTrack.h"
 #include "SubtitleSection.h"
 #include "SubtitleEvalTemplate.h"
+#include "Evaluation/MovieSceneEvaluationTrack.h"
 
 #define LOCTEXT_NAMESPACE "MovieSceneSubtitleTrack"
 
 UMovieSceneSubtitleTrack::UMovieSceneSubtitleTrack()
 {
+	// Required for legacy template evaluation to work in SubSequences
+	EvalOptions.bCanEvaluateNearestSection = EvalOptions.bEvaluateNearestSection_DEPRECATED = true;
+
 #if WITH_EDITORONLY_DATA
 	TrackTint = FColor(80, 160, 240, 200);
 #endif
@@ -68,24 +72,33 @@ FMovieSceneEvalTemplatePtr UMovieSceneSubtitleTrack::CreateTemplateForSection(co
 	return FMovieSceneEvalTemplatePtr();
 }
 
+void UMovieSceneSubtitleTrack::PostCompile(FMovieSceneEvaluationTrack& Track, const FMovieSceneTrackCompilerArgs& Args) const
+{
+	Track.SetEvaluationPriority(0);
+}
+
 FText UMovieSceneSubtitleTrack::GetEffectiveSpeakerName() const
 {
 	if (bOverrideSpeakerName && !SpeakerNameOverride.IsEmptyOrWhitespace())
 	{
 		return SpeakerNameOverride;
 	}
-	// Fall back to the track's display name
+
 #if WITH_EDITORONLY_DATA
-	return GetDisplayName();
-#else
-	return FText::FromString(TEXT("Speaker"));
+	FText TrackDisplayName = GetDisplayName();
+	if (!TrackDisplayName.IsEmpty() && !TrackDisplayName.EqualTo(GetDefaultDisplayName()))
+	{
+		return TrackDisplayName;
+	}
 #endif
+
+	return FText::GetEmpty();
 }
 
 #if WITH_EDITORONLY_DATA
 FText UMovieSceneSubtitleTrack::GetDefaultDisplayName() const
 {
-	return LOCTEXT("TrackName", "Subtitles");
+	return LOCTEXT("TrackName", "Subtitle");
 }
 #endif
 

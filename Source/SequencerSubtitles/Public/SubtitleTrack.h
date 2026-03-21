@@ -33,6 +33,10 @@ public:
 	/** Returns the effective speaker name (override → track display name). */
 	FText GetEffectiveSpeakerName() const;
 
+	/** Track color used as the default BarColor for newly created sections. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle")
+	FLinearColor TrackColor = FLinearColor(0.2f, 0.6f, 0.9f, 1.0f);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
 		meta = (ShowOnlyInnerProperties))
 	FSubtitleAppearance Appearance;
@@ -51,6 +55,7 @@ public:
 
 	// IMovieSceneTrackTemplateProducer interface
 	virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
+	virtual void PostCompile(FMovieSceneEvaluationTrack& Track, const FMovieSceneTrackCompilerArgs& Args) const override;
 
 #if WITH_EDITORONLY_DATA
 	virtual FText GetDefaultDisplayName() const override;

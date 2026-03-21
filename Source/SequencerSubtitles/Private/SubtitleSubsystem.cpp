@@ -249,6 +249,57 @@ void USubtitleSubsystem::ApplySpeakerAndSeparator(const FSubtitleAppearance& InA
 	}
 }
 
+FString USubtitleSubsystem::WrapTextByCharLimit(const FString& InText, int32 MaxCharsPerLine)
+{
+	if (MaxCharsPerLine <= 0)
+	{
+		return InText;
+	}
+
+	FString Result;
+	// Process each existing line independently
+	TArray<FString> Lines;
+	InText.ParseIntoArray(Lines, TEXT("\n"), /*bCullEmpty=*/false);
+
+	for (int32 LineIdx = 0; LineIdx < Lines.Num(); ++LineIdx)
+	{
+		if (LineIdx > 0)
+		{
+			Result += TEXT("\n");
+		}
+
+		const FString& Line = Lines[LineIdx];
+		if (Line.Len() <= MaxCharsPerLine)
+		{
+			Result += Line;
+			continue;
+		}
+
+		// Wrap long lines
+		int32 Pos = 0;
+		while (Pos < Line.Len())
+		{
+			if (Pos > 0)
+			{
+				Result += TEXT("\n");
+			}
+
+			const int32 Remaining = Line.Len() - Pos;
+			if (Remaining <= MaxCharsPerLine)
+			{
+				Result += Line.Mid(Pos);
+				break;
+			}
+
+			// Take MaxCharsPerLine characters
+			Result += Line.Mid(Pos, MaxCharsPerLine);
+			Pos += MaxCharsPerLine;
+		}
+	}
+
+	return Result;
+}
+
 void USubtitleSubsystem::NotifySubtitleStarted(const FText& InSubtitleText, FLinearColor InBarColor, const FSubtitleAppearance& InAppearance, const FText& InSpeakerName)
 {
 	bIsSubtitleActive = true;
@@ -609,6 +660,22 @@ void USubtitleSubsystem::ApplyAppearance(const FSubtitleAppearance& InAppearance
 			OverlaySlot->SetVerticalAlignment(VAlign_Bottom);
 			break;
 		}
+
+		// HAlign_Fill preserves AutoWrapText width; Left/Right shrink-wrap the content.
+		switch (InAppearance.HorizontalPosition)
+		{
+		case ESubtitleHorizontalPosition::Left:
+			OverlaySlot->SetHorizontalAlignment(HAlign_Left);
+			break;
+		case ESubtitleHorizontalPosition::Right:
+			OverlaySlot->SetHorizontalAlignment(HAlign_Right);
+			break;
+		case ESubtitleHorizontalPosition::Center:
+		default:
+			OverlaySlot->SetHorizontalAlignment(HAlign_Fill);
+			break;
+		}
+
 		OverlaySlot->SetPadding(InAppearance.ScreenPadding);
 	}
 

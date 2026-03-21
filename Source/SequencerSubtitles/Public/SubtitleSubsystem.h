@@ -73,6 +73,11 @@ public:
 	UPROPERTY()
 	FSubtitleAppearance CurrentAppearance;
 
+	const FText& GetCurrentSpeakerName() const { return CurrentSpeakerName; }
+
+	/** Apply MaxCharsPerLine wrapping to a string. Returns the wrapped version. */
+	static FString WrapTextByCharLimit(const FString& InText, int32 MaxCharsPerLine);
+
 private:
 	void EnsureSlateWidgets();
 	void AddToViewport();

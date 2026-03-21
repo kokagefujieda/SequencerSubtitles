@@ -17,6 +17,7 @@ public:
 
 	virtual int32 OnPaintSection(FSequencerSectionPainter& Painter) const override;
 	virtual FText GetSectionTitle() const override;
+	virtual FText GetSectionToolTip() const override;
 #if ENGINE_MINOR_VERSION >= 7
 	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
 #else
@@ -51,4 +52,19 @@ public:
 private:
 	void HandleAddSubtitleTrack();
 	void AddNewSectionToTrack(UMovieSceneTrack* Track);
+
+	/** Export all section texts to clipboard (TSV with timing). */
+	void ExportSectionsToClipboard(UMovieSceneTrack* Track);
+
+	/** Import section texts from clipboard (auto-detect TSV or plain). */
+	void ImportSectionsFromClipboard(UMovieSceneTrack* Track);
+
+	/** Toggle bTypewriterEffect on all sections in the track. */
+	void ToggleTypewriterOnAllSections(UMovieSceneTrack* Track);
+
+	/** Check if any section has typewriter enabled. */
+	bool HasAnyTypewriterEnabled(UMovieSceneTrack* Track) const;
+
+	/** Build the color preset dropdown menu. */
+	void BuildColorPresetMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track);
 };

@@ -3,8 +3,8 @@
 #include "SubtitleEvalTemplate.h"
 #include "SubtitleSection.h"
 #include "SubtitleTrack.h"
-#include "MovieScene.h"
 #include "SubtitleSubsystem.h"
+#include "MovieScene.h"
 #include "IMovieScenePlayer.h"
 #include "MovieSceneExecutionToken.h"
 #include "Engine/World.h"
@@ -64,19 +64,43 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 
 FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection& InSection)
 {
-	SubtitleText = InSection.SubtitleText;
 	BarColor     = InSection.BarColor;
 
 	const UMovieSceneSubtitleTrack* Track = InSection.GetTypedOuter<UMovieSceneSubtitleTrack>();
 
-	// Speaker name: Section override → Track setting → Track display name
+	// Speaker name: Section override → Track setting → Binding Name → Track display name
 	if (InSection.bOverrideSpeakerName && !InSection.SpeakerNameOverride.IsEmptyOrWhitespace())
 	{
 		SpeakerName = InSection.SpeakerNameOverride;
 	}
+	else if (Track && Track->bOverrideSpeakerName && !Track->SpeakerNameOverride.IsEmptyOrWhitespace())
+	{
+		SpeakerName = Track->SpeakerNameOverride;
+	}
 	else if (Track)
 	{
-		SpeakerName = Track->GetEffectiveSpeakerName();
+		bool bFoundBindingName = false;
+		if (const UMovieScene* MovieScene = Track->GetTypedOuter<UMovieScene>())
+		{
+			for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+			{
+				if (Binding.GetTracks().Contains(Track))
+				{
+					FString BindingName = Binding.GetName();
+					if (!BindingName.IsEmpty())
+					{
+						SpeakerName = FText::FromString(BindingName);
+						bFoundBindingName = true;
+					}
+					break;
+				}
+			}
+		}
+
+		if (!bFoundBindingName)
+		{
+			SpeakerName = Track->GetEffectiveSpeakerName();
+		}
 	}
 
 	// Appearance: Section override → Track setting
@@ -87,6 +111,17 @@ FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection
 	else if (Track)
 	{
 		Appearance = Track->Appearance;
+	}
+
+	// Apply MaxCharsPerLine wrapping so TotalChars matches the wrapped text
+	if (Appearance.MaxCharsPerLine > 0)
+	{
+		SubtitleText = FText::FromString(
+			USubtitleSubsystem::WrapTextByCharLimit(InSection.SubtitleText.ToString(), Appearance.MaxCharsPerLine));
+	}
+	else
+	{
+		SubtitleText = InSection.SubtitleText;
 	}
 
 	bTypewriterEffect = InSection.bTypewriterEffect;
@@ -148,9 +183,13 @@ void FSubtitleEvalTemplate::Evaluate(
 			const float  ElapsedSec  = (TicksPerSec > 0.0) ? (float)(Elapsed / TicksPerSec) : 0.f;
 			const int32  ByInterval  = FMath::FloorToInt(ElapsedSec / TypewriterCharInterval);
 
-			// Section-forced: ensures all chars show by section end (fallback if section is short)
-			const float  Progress    = FMath::Clamp((float)Elapsed / SectionDuration, 0.0f, 1.0f);
-			const int32  BySection   = FMath::FloorToInt(Progress * TotalChars);
+			// Section-forced: ensures all chars show by the last evaluated frame.
+			// The range is [Start, End) (exclusive upper), so the last frame has
+			// Elapsed = SectionDuration - 1. Use (SectionDuration - 1) as the
+			// denominator so Progress reaches 1.0 on that frame.
+			const int32  EffectiveDuration = FMath::Max(SectionDuration - 1, 1);
+			const float  Progress    = FMath::Clamp((float)Elapsed / EffectiveDuration, 0.0f, 1.0f);
+			const int32  BySection   = FMath::CeilToInt(Progress * TotalChars);
 
 			// Use whichever reveals more characters (interval wins normally, section wins if short)
 			VisibleCharCount = FMath::Clamp(FMath::Max(ByInterval, BySection), 0, TotalChars);
