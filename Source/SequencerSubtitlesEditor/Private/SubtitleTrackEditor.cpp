@@ -246,13 +246,11 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		];
 #endif
 
-	const FVector2D IconSize(14.0f, 14.0f);
-
 	// --- Export button ---
 	TSharedRef<SWidget> ExportButton =
 		SNew(SButton)
 		.ButtonStyle(FAppStyle::Get(), "FlatButton")
-		.ContentPadding(FMargin(0))
+		.ContentPadding(FMargin(2, 0))
 		.OnClicked_Lambda([this, WeakTrack]() -> FReply
 		{
 			if (UMovieSceneTrack* TrackPtr = WeakTrack.Get())
@@ -263,21 +261,24 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		})
 		.ToolTipText(LOCTEXT("ExportTooltip", "Export all subtitle texts to clipboard (TSV with timing)"))
 		[
-			SNew(SImage)
 #if ENGINE_MINOR_VERSION >= 7
+			SNew(SImage)
 			.Image(FAppStyle::Get().GetBrush("Icons.Export"))
-#else
-			.Image(FAppStyle::Get().GetBrush("Icons.ArrowUp"))
-#endif
-			.DesiredSizeOverride(IconSize)
+			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
+#else
+			SNew(STextBlock)
+			.Text(LOCTEXT("ExportButtonLabel", "Exp"))
+			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
+			.ColorAndOpacity(FSlateColor::UseForeground())
+#endif
 		];
 
 	// --- Import button ---
 	TSharedRef<SWidget> ImportButton =
 		SNew(SButton)
 		.ButtonStyle(FAppStyle::Get(), "FlatButton")
-		.ContentPadding(FMargin(0))
+		.ContentPadding(FMargin(2, 0))
 		.OnClicked_Lambda([this, WeakTrack]() -> FReply
 		{
 			if (UMovieSceneTrack* TrackPtr = WeakTrack.Get())
@@ -288,10 +289,17 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		})
 		.ToolTipText(LOCTEXT("ImportTooltip", "Import subtitle texts from clipboard (TSV or plain text)"))
 		[
+#if ENGINE_MINOR_VERSION >= 7
 			SNew(SImage)
 			.Image(FAppStyle::Get().GetBrush("Icons.Import"))
-			.DesiredSizeOverride(IconSize)
+			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
+#else
+			SNew(STextBlock)
+			.Text(LOCTEXT("ImportButtonLabel", "Imp"))
+			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
+			.ColorAndOpacity(FSlateColor::UseForeground())
+#endif
 		];
 
 	// --- Color preset dropdown ---
