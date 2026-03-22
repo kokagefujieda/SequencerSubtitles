@@ -20,6 +20,8 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Images/SImage.h"
+#include "Brushes/SlateImageBrush.h"
+#include "Misc/Paths.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "JsonObjectConverter.h"
 #include "Serialization/JsonSerializer.h"
@@ -30,6 +32,24 @@
 #endif
 
 #define LOCTEXT_NAMESPACE "SubtitleTrackEditor"
+
+// --- Icon brushes (SVG-based, works across UE 5.5/5.6/5.7) ---
+
+static const FSlateBrush* GetExportIconBrush()
+{
+	static FSlateVectorImageBrush Brush(
+		FPaths::EngineContentDir() / TEXT("Slate/Starship/Common/export.svg"),
+		FVector2D(16.0f, 16.0f));
+	return &Brush;
+}
+
+static const FSlateBrush* GetImportIconBrush()
+{
+	static FSlateVectorImageBrush Brush(
+		FPaths::EngineContentDir() / TEXT("Slate/Starship/Common/import.svg"),
+		FVector2D(16.0f, 16.0f));
+	return &Brush;
+}
 
 // --- FSubtitleSectionUI ---
 
@@ -265,17 +285,10 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		})
 		.ToolTipText(LOCTEXT("ExportTooltip", "Export all sections to clipboard as JSON (text, timing, appearance)"))
 		[
-#if ENGINE_MINOR_VERSION >= 7
 			SNew(SImage)
-			.Image(FAppStyle::Get().GetBrush("Icons.Export"))
+			.Image(GetExportIconBrush())
 			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
-#else
-			SNew(SImage)
-			.Image(FAppStyle::Get().GetBrush("Icons.Download"))
-			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
-			.ColorAndOpacity(FSlateColor::UseForeground())
-#endif
 		];
 
 	// --- Import button ---
@@ -294,7 +307,7 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		.ToolTipText(LOCTEXT("ImportTooltip", "Import sections from clipboard (JSON, TSV, or plain text)"))
 		[
 			SNew(SImage)
-			.Image(FAppStyle::Get().GetBrush("Icons.Import"))
+			.Image(GetImportIconBrush())
 			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		];
