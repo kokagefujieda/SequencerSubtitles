@@ -271,9 +271,9 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 #else
-			SNew(STextBlock)
-			.Text(LOCTEXT("ExportButtonLabel", "Exp"))
-			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
+			SNew(SImage)
+			.Image(FAppStyle::Get().GetBrush("Icons.Download"))
+			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 #endif
 		];
@@ -293,17 +293,10 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		})
 		.ToolTipText(LOCTEXT("ImportTooltip", "Import sections from clipboard (JSON, TSV, or plain text)"))
 		[
-#if ENGINE_MINOR_VERSION >= 7
 			SNew(SImage)
 			.Image(FAppStyle::Get().GetBrush("Icons.Import"))
 			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
-#else
-			SNew(STextBlock)
-			.Text(LOCTEXT("ImportButtonLabel", "Imp"))
-			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
-			.ColorAndOpacity(FSlateColor::UseForeground())
-#endif
 		];
 
 	// --- Color preset dropdown ---
