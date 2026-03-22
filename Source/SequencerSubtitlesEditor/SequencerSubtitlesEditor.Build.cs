@@ -30,7 +30,9 @@ public class SequencerSubtitlesEditor : ModuleRules
 				"MovieSceneTools",
 				"MovieSceneTracks",
 				"UnrealEd",
-				"WorkspaceMenuStructure"
+				"WorkspaceMenuStructure",
+				"Json",
+				"JsonUtilities"
 			}
 		);
 	}

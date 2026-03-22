@@ -67,4 +67,10 @@ private:
 
 	/** Build the color preset dropdown menu. */
 	void BuildColorPresetMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track);
+
+	/** Export all subtitle tracks in the sequence to clipboard as JSON. */
+	void ExportAllTracksToClipboard();
+
+	/** Import all subtitle tracks from clipboard JSON into the sequence. */
+	void ImportAllTracksFromClipboard();
 };

@@ -21,6 +21,10 @@
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Images/SImage.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "JsonObjectConverter.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+#include "Serialization/JsonReader.h"
 #if ENGINE_MINOR_VERSION >= 7
 #include "MVVM/Views/ViewUtilities.h"
 #endif
@@ -259,7 +263,7 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 			}
 			return FReply::Handled();
 		})
-		.ToolTipText(LOCTEXT("ExportTooltip", "Export all subtitle texts to clipboard (TSV with timing)"))
+		.ToolTipText(LOCTEXT("ExportTooltip", "Export all sections to clipboard as JSON (text, timing, appearance)"))
 		[
 #if ENGINE_MINOR_VERSION >= 7
 			SNew(SImage)
@@ -287,7 +291,7 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 			}
 			return FReply::Handled();
 		})
-		.ToolTipText(LOCTEXT("ImportTooltip", "Import subtitle texts from clipboard (TSV or plain text)"))
+		.ToolTipText(LOCTEXT("ImportTooltip", "Import sections from clipboard (JSON, TSV, or plain text)"))
 		[
 #if ENGINE_MINOR_VERSION >= 7
 			SNew(SImage)
@@ -374,6 +378,23 @@ void FSubtitleTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMov
 			LOCTEXT("AddSubtitleSectionCtxTooltip", "Add a new subtitle section at the current playhead position"),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::AddNewSectionToTrack, Track))
+		);
+	}
+	MenuBuilder.EndSection();
+
+	MenuBuilder.BeginSection(TEXT("SubtitleAllTracks"), LOCTEXT("SubtitleAllTracksMenu", "All Tracks"));
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ExportAllTracks", "Export All Subtitle Tracks"),
+			LOCTEXT("ExportAllTracksTooltip", "Export all subtitle tracks in this sequence to clipboard as JSON"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ExportAllTracksToClipboard))
+		);
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ImportAllTracks", "Import All Subtitle Tracks"),
+			LOCTEXT("ImportAllTracksTooltip", "Import subtitle tracks from clipboard JSON (creates new tracks)"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ImportAllTracksFromClipboard))
 		);
 	}
 	MenuBuilder.EndSection();
@@ -464,6 +485,161 @@ void FSubtitleTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
 
 // --- Export / Import ---
 
+static TSharedRef<FJsonObject> LinearColorToJson(const FLinearColor& Color)
+{
+	TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetNumberField(TEXT("r"), Color.R);
+	Obj->SetNumberField(TEXT("g"), Color.G);
+	Obj->SetNumberField(TEXT("b"), Color.B);
+	Obj->SetNumberField(TEXT("a"), Color.A);
+	return Obj;
+}
+
+static FLinearColor JsonToLinearColor(const TSharedPtr<FJsonObject>& Obj, const FLinearColor& Default = FLinearColor::White)
+{
+	if (!Obj.IsValid()) return Default;
+	return FLinearColor(
+		Obj->GetNumberField(TEXT("r")),
+		Obj->GetNumberField(TEXT("g")),
+		Obj->GetNumberField(TEXT("b")),
+		Obj->GetNumberField(TEXT("a"))
+	);
+}
+
+static TSharedRef<FJsonObject> AppearanceToJson(const FSubtitleAppearance& A)
+{
+	TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+
+	if (!A.FontAsset.IsNull())
+	{
+		Obj->SetStringField(TEXT("fontAsset"), A.FontAsset.ToString());
+	}
+	Obj->SetNumberField(TEXT("fontSize"), A.FontSize);
+	Obj->SetObjectField(TEXT("textColor"), LinearColorToJson(A.TextColor));
+	Obj->SetObjectField(TEXT("backgroundColor"), LinearColorToJson(A.BackgroundColor));
+
+	Obj->SetStringField(TEXT("verticalPosition"), StaticEnum<ESubtitleVerticalPosition>()->GetNameStringByValue(static_cast<int64>(A.VerticalPosition)));
+	Obj->SetStringField(TEXT("horizontalPosition"), StaticEnum<ESubtitleHorizontalPosition>()->GetNameStringByValue(static_cast<int64>(A.HorizontalPosition)));
+	Obj->SetStringField(TEXT("textAlignment"), StaticEnum<ESubtitleTextAlignment>()->GetNameStringByValue(static_cast<int64>(A.TextAlignment)));
+
+	// ScreenPadding
+	{
+		TSharedRef<FJsonObject> Pad = MakeShared<FJsonObject>();
+		Pad->SetNumberField(TEXT("left"), A.ScreenPadding.Left);
+		Pad->SetNumberField(TEXT("top"), A.ScreenPadding.Top);
+		Pad->SetNumberField(TEXT("right"), A.ScreenPadding.Right);
+		Pad->SetNumberField(TEXT("bottom"), A.ScreenPadding.Bottom);
+		Obj->SetObjectField(TEXT("screenPadding"), Pad);
+	}
+
+	Obj->SetStringField(TEXT("entranceType"), StaticEnum<ESubtitleEntranceType>()->GetNameStringByValue(static_cast<int64>(A.EntranceType)));
+	Obj->SetNumberField(TEXT("entranceDuration"), A.EntranceDuration);
+
+	if (!A.TypewriterSound.IsNull())
+	{
+		Obj->SetStringField(TEXT("typewriterSound"), A.TypewriterSound.ToString());
+	}
+	Obj->SetNumberField(TEXT("typewriterSoundInterval"), A.TypewriterSoundInterval);
+	Obj->SetNumberField(TEXT("maxLinesPerPage"), A.MaxLinesPerPage);
+	Obj->SetNumberField(TEXT("maxCharsPerLine"), A.MaxCharsPerLine);
+
+	Obj->SetObjectField(TEXT("speakerNameColor"), LinearColorToJson(A.SpeakerNameColor));
+	Obj->SetNumberField(TEXT("speakerNameFontSize"), A.SpeakerNameFontSize);
+
+	Obj->SetBoolField(TEXT("showSeparatorLine"), A.bShowSeparatorLine);
+	Obj->SetBoolField(TEXT("useLineImage"), A.bUseLineImage);
+	if (!A.LineImage.IsNull())
+	{
+		Obj->SetStringField(TEXT("lineImage"), A.LineImage.ToString());
+	}
+	Obj->SetObjectField(TEXT("separatorLineColor"), LinearColorToJson(A.SeparatorLineColor));
+	Obj->SetNumberField(TEXT("separatorLineThickness"), A.SeparatorLineThickness);
+	Obj->SetNumberField(TEXT("messageWindowHeight"), A.MessageWindowHeight);
+
+	Obj->SetBoolField(TEXT("overrideExitAnimation"), A.bOverrideExitAnimation);
+	Obj->SetStringField(TEXT("exitType"), StaticEnum<ESubtitleEntranceType>()->GetNameStringByValue(static_cast<int64>(A.ExitType)));
+	Obj->SetNumberField(TEXT("exitDuration"), A.ExitDuration);
+
+	return Obj;
+}
+
+static FSubtitleAppearance JsonToAppearance(const TSharedPtr<FJsonObject>& Obj)
+{
+	FSubtitleAppearance A;
+	if (!Obj.IsValid()) return A;
+
+	FString Str;
+	if (Obj->TryGetStringField(TEXT("fontAsset"), Str))
+	{
+		A.FontAsset = TSoftObjectPtr<UObject>(FSoftObjectPath(Str));
+	}
+	A.FontSize = Obj->GetIntegerField(TEXT("fontSize"));
+	A.TextColor = JsonToLinearColor(Obj->GetObjectField(TEXT("textColor")));
+	A.BackgroundColor = JsonToLinearColor(Obj->GetObjectField(TEXT("backgroundColor")), FLinearColor(0, 0, 0, 0));
+
+	if (Obj->TryGetStringField(TEXT("verticalPosition"), Str))
+	{
+		int64 Val = StaticEnum<ESubtitleVerticalPosition>()->GetValueByNameString(Str);
+		if (Val != INDEX_NONE) A.VerticalPosition = static_cast<ESubtitleVerticalPosition>(Val);
+	}
+	if (Obj->TryGetStringField(TEXT("horizontalPosition"), Str))
+	{
+		int64 Val = StaticEnum<ESubtitleHorizontalPosition>()->GetValueByNameString(Str);
+		if (Val != INDEX_NONE) A.HorizontalPosition = static_cast<ESubtitleHorizontalPosition>(Val);
+	}
+	if (Obj->TryGetStringField(TEXT("textAlignment"), Str))
+	{
+		int64 Val = StaticEnum<ESubtitleTextAlignment>()->GetValueByNameString(Str);
+		if (Val != INDEX_NONE) A.TextAlignment = static_cast<ESubtitleTextAlignment>(Val);
+	}
+
+	if (const TSharedPtr<FJsonObject>* Pad = nullptr; Obj->TryGetObjectField(TEXT("screenPadding"), Pad))
+	{
+		A.ScreenPadding.Left = (*Pad)->GetNumberField(TEXT("left"));
+		A.ScreenPadding.Top = (*Pad)->GetNumberField(TEXT("top"));
+		A.ScreenPadding.Right = (*Pad)->GetNumberField(TEXT("right"));
+		A.ScreenPadding.Bottom = (*Pad)->GetNumberField(TEXT("bottom"));
+	}
+
+	if (Obj->TryGetStringField(TEXT("entranceType"), Str))
+	{
+		int64 Val = StaticEnum<ESubtitleEntranceType>()->GetValueByNameString(Str);
+		if (Val != INDEX_NONE) A.EntranceType = static_cast<ESubtitleEntranceType>(Val);
+	}
+	A.EntranceDuration = Obj->GetNumberField(TEXT("entranceDuration"));
+
+	if (Obj->TryGetStringField(TEXT("typewriterSound"), Str))
+	{
+		A.TypewriterSound = TSoftObjectPtr<USoundBase>(FSoftObjectPath(Str));
+	}
+	A.TypewriterSoundInterval = Obj->GetNumberField(TEXT("typewriterSoundInterval"));
+	A.MaxLinesPerPage = Obj->GetIntegerField(TEXT("maxLinesPerPage"));
+	A.MaxCharsPerLine = Obj->GetIntegerField(TEXT("maxCharsPerLine"));
+
+	A.SpeakerNameColor = JsonToLinearColor(Obj->GetObjectField(TEXT("speakerNameColor")), FLinearColor(1, 0.85f, 0, 1));
+	A.SpeakerNameFontSize = Obj->GetIntegerField(TEXT("speakerNameFontSize"));
+
+	A.bShowSeparatorLine = Obj->GetBoolField(TEXT("showSeparatorLine"));
+	A.bUseLineImage = Obj->GetBoolField(TEXT("useLineImage"));
+	if (Obj->TryGetStringField(TEXT("lineImage"), Str))
+	{
+		A.LineImage = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(Str));
+	}
+	A.SeparatorLineColor = JsonToLinearColor(Obj->GetObjectField(TEXT("separatorLineColor")), FLinearColor(0.8f, 0.7f, 0.3f, 0.8f));
+	A.SeparatorLineThickness = Obj->GetNumberField(TEXT("separatorLineThickness"));
+	A.MessageWindowHeight = Obj->GetNumberField(TEXT("messageWindowHeight"));
+
+	A.bOverrideExitAnimation = Obj->GetBoolField(TEXT("overrideExitAnimation"));
+	if (Obj->TryGetStringField(TEXT("exitType"), Str))
+	{
+		int64 Val = StaticEnum<ESubtitleEntranceType>()->GetValueByNameString(Str);
+		if (Val != INDEX_NONE) A.ExitType = static_cast<ESubtitleEntranceType>(Val);
+	}
+	A.ExitDuration = Obj->GetNumberField(TEXT("exitDuration"));
+
+	return A;
+}
+
 void FSubtitleTrackEditor::ExportSectionsToClipboard(UMovieSceneTrack* Track)
 {
 	if (!Track) return;
@@ -483,7 +659,11 @@ void FSubtitleTrackEditor::ExportSectionsToClipboard(UMovieSceneTrack* Track)
 		return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame();
 	});
 
-	FString Result;
+	TSharedRef<FJsonObject> RootObj = MakeShared<FJsonObject>();
+	RootObj->SetNumberField(TEXT("version"), 1);
+	RootObj->SetStringField(TEXT("format"), TEXT("SequencerSubtitles"));
+
+	TArray<TSharedPtr<FJsonValue>> SectionArray;
 	for (const UMovieSceneSection* Section : Sections)
 	{
 		const UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section);
@@ -492,14 +672,72 @@ void FSubtitleTrackEditor::ExportSectionsToClipboard(UMovieSceneTrack* Track)
 		const double StartSeconds = TickResolution.AsSeconds(Section->GetInclusiveStartFrame());
 		const double EndSeconds = TickResolution.AsSeconds(Section->GetExclusiveEndFrame());
 
-		// Escape newlines in subtitle text as literal \n
-		FString Text = SubSection->SubtitleText.ToString();
-		Text.ReplaceInline(TEXT("\n"), TEXT("\\n"));
+		TSharedRef<FJsonObject> SObj = MakeShared<FJsonObject>();
+		SObj->SetNumberField(TEXT("start"), StartSeconds);
+		SObj->SetNumberField(TEXT("end"), EndSeconds);
+		SObj->SetStringField(TEXT("text"), SubSection->SubtitleText.ToString());
+		SObj->SetObjectField(TEXT("barColor"), LinearColorToJson(SubSection->BarColor));
+		SObj->SetBoolField(TEXT("typewriterEffect"), SubSection->bTypewriterEffect);
+		SObj->SetNumberField(TEXT("typewriterCharInterval"), SubSection->TypewriterCharInterval);
 
-		Result += FString::Printf(TEXT("%.1f\t%.1f\t%s\n"), StartSeconds, EndSeconds, *Text);
+		SObj->SetBoolField(TEXT("overrideSpeakerName"), SubSection->bOverrideSpeakerName);
+		if (SubSection->bOverrideSpeakerName)
+		{
+			SObj->SetStringField(TEXT("speakerNameOverride"), SubSection->SpeakerNameOverride.ToString());
+		}
+
+		SObj->SetBoolField(TEXT("overrideAppearance"), SubSection->bOverrideAppearance);
+		if (SubSection->bOverrideAppearance)
+		{
+			SObj->SetObjectField(TEXT("appearance"), AppearanceToJson(SubSection->AppearanceOverride));
+		}
+
+		SectionArray.Add(MakeShared<FJsonValueObject>(SObj));
 	}
 
-	FPlatformApplicationMisc::ClipboardCopy(*Result);
+	RootObj->SetArrayField(TEXT("sections"), SectionArray);
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(RootObj, Writer);
+
+	FPlatformApplicationMisc::ClipboardCopy(*OutputString);
+}
+
+static void ApplyJsonSectionProperties(UMovieSceneSeqSubtitleSection* SubSection, const TSharedPtr<FJsonObject>& SObj)
+{
+	if (!SubSection || !SObj.IsValid()) return;
+
+	SubSection->SubtitleText = FText::FromString(SObj->GetStringField(TEXT("text")));
+
+	if (SObj->HasField(TEXT("barColor")))
+	{
+		SubSection->BarColor = JsonToLinearColor(SObj->GetObjectField(TEXT("barColor")));
+	}
+	if (SObj->HasField(TEXT("typewriterEffect")))
+	{
+		SubSection->bTypewriterEffect = SObj->GetBoolField(TEXT("typewriterEffect"));
+	}
+	if (SObj->HasField(TEXT("typewriterCharInterval")))
+	{
+		SubSection->TypewriterCharInterval = SObj->GetNumberField(TEXT("typewriterCharInterval"));
+	}
+	if (SObj->HasField(TEXT("overrideSpeakerName")))
+	{
+		SubSection->bOverrideSpeakerName = SObj->GetBoolField(TEXT("overrideSpeakerName"));
+	}
+	if (SObj->HasField(TEXT("speakerNameOverride")))
+	{
+		SubSection->SpeakerNameOverride = FText::FromString(SObj->GetStringField(TEXT("speakerNameOverride")));
+	}
+	if (SObj->HasField(TEXT("overrideAppearance")))
+	{
+		SubSection->bOverrideAppearance = SObj->GetBoolField(TEXT("overrideAppearance"));
+	}
+	if (SObj->HasField(TEXT("appearance")))
+	{
+		SubSection->AppearanceOverride = JsonToAppearance(SObj->GetObjectField(TEXT("appearance")));
+	}
 }
 
 void FSubtitleTrackEditor::ImportSectionsFromClipboard(UMovieSceneTrack* Track)
@@ -518,7 +756,76 @@ void FSubtitleTrackEditor::ImportSectionsFromClipboard(UMovieSceneTrack* Track)
 
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
 
-	// Parse lines
+	// Try JSON format first
+	TSharedPtr<FJsonObject> RootObj;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ClipboardText);
+	if (FJsonSerializer::Deserialize(Reader, RootObj) && RootObj.IsValid()
+		&& RootObj->HasField(TEXT("sections")))
+	{
+		// --- JSON import ---
+		const TArray<TSharedPtr<FJsonValue>>& SectionArray = RootObj->GetArrayField(TEXT("sections"));
+		if (SectionArray.Num() == 0) return;
+
+		const FScopedTransaction Transaction(LOCTEXT("ImportSubtitleSections_Transaction", "Import Subtitle Sections"));
+		MovieScene->Modify();
+		Track->Modify();
+
+		// Collect existing sections sorted by start time
+		TArray<UMovieSceneSection*> ExistingSections = Track->GetAllSections();
+		ExistingSections.Sort([](const UMovieSceneSection& A, const UMovieSceneSection& B)
+		{
+			return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame();
+		});
+
+		for (int32 i = 0; i < SectionArray.Num(); ++i)
+		{
+			const TSharedPtr<FJsonObject>& SObj = SectionArray[i]->AsObject();
+			if (!SObj.IsValid()) continue;
+
+			const double StartSeconds = SObj->GetNumberField(TEXT("start"));
+			const double EndSeconds = SObj->GetNumberField(TEXT("end"));
+			const FFrameNumber Start = (StartSeconds * TickResolution).FloorToFrame();
+			const FFrameNumber End = (EndSeconds * TickResolution).FloorToFrame();
+
+			if (i < ExistingSections.Num())
+			{
+				// Overwrite existing section
+				if (UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(ExistingSections[i]))
+				{
+					SubSection->Modify();
+					SubSection->SetRange(TRange<FFrameNumber>(Start, End));
+					ApplyJsonSectionProperties(SubSection, SObj);
+				}
+			}
+			else
+			{
+				// Create new section
+				UMovieSceneSection* NewSection = Track->CreateNewSection();
+				if (!NewSection) continue;
+
+				NewSection->SetRange(TRange<FFrameNumber>(Start, End));
+
+				if (UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(NewSection))
+				{
+					ApplyJsonSectionProperties(SubSection, SObj);
+				}
+
+				int32 OverlapPriority = 0;
+				for (UMovieSceneSection* S : Track->GetAllSections())
+				{
+					OverlapPriority = FMath::Max(S->GetOverlapPriority() + 1, OverlapPriority);
+				}
+				NewSection->SetOverlapPriority(OverlapPriority);
+
+				Track->AddSection(*NewSection);
+			}
+		}
+
+		SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
+		return;
+	}
+
+	// --- Legacy TSV / plain text import ---
 	TArray<FString> Lines;
 	ClipboardText.ParseIntoArrayLines(Lines);
 
@@ -526,7 +833,6 @@ void FSubtitleTrackEditor::ImportSectionsFromClipboard(UMovieSceneTrack* Track)
 	Lines.RemoveAll([](const FString& Line) { return Line.TrimStartAndEnd().IsEmpty(); });
 	if (Lines.Num() == 0) return;
 
-	// Detect format: TSV (start\tend\ttext) or plain text
 	struct FImportEntry
 	{
 		double StartSeconds = -1.0;
@@ -620,14 +926,8 @@ void FSubtitleTrackEditor::ImportSectionsFromClipboard(UMovieSceneTrack* Track)
 				FFrameNumber Start;
 				if (ExistingSections.Num() > 0 || i > 0)
 				{
-					// Find the last section end
-					UMovieSceneSection* LastSection = (i > 0 && i - 1 < ExistingSections.Num())
-						? ExistingSections.Last()
-						: (ExistingSections.Num() > 0 ? ExistingSections.Last() : nullptr);
-
 					if (i > 0)
 					{
-						// We just added sections above this index, find from track
 						TArray<UMovieSceneSection*> AllNow = Track->GetAllSections();
 						if (AllNow.Num() > 0)
 						{
@@ -642,13 +942,17 @@ void FSubtitleTrackEditor::ImportSectionsFromClipboard(UMovieSceneTrack* Track)
 							Start = MaxEnd;
 						}
 					}
-					else if (LastSection && LastSection->HasEndFrame())
-					{
-						Start = LastSection->GetExclusiveEndFrame();
-					}
 					else
 					{
-						Start = FFrameNumber(0);
+						UMovieSceneSection* LastSection = ExistingSections.Num() > 0 ? ExistingSections.Last() : nullptr;
+						if (LastSection && LastSection->HasEndFrame())
+						{
+							Start = LastSection->GetExclusiveEndFrame();
+						}
+						else
+						{
+							Start = FFrameNumber(0);
+						}
 					}
 				}
 				else
@@ -816,6 +1120,194 @@ void FSubtitleTrackEditor::HandleAddSubtitleTrack()
 
 		GetSequencer()->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
 	}
+}
+
+// --- Export / Import All Tracks ---
+
+static TSharedRef<FJsonObject> ExportSingleTrackToJson(const UMovieSceneSubtitleTrack* SubTrack, const FFrameRate& TickResolution)
+{
+	TSharedRef<FJsonObject> TrackObj = MakeShared<FJsonObject>();
+	TrackObj->SetStringField(TEXT("displayName"), SubTrack->GetDisplayName().ToString());
+	TrackObj->SetObjectField(TEXT("trackColor"), LinearColorToJson(SubTrack->TrackColor));
+	TrackObj->SetBoolField(TEXT("overrideSpeakerName"), SubTrack->bOverrideSpeakerName);
+	if (SubTrack->bOverrideSpeakerName)
+	{
+		TrackObj->SetStringField(TEXT("speakerNameOverride"), SubTrack->SpeakerNameOverride.ToString());
+	}
+	TrackObj->SetObjectField(TEXT("appearance"), AppearanceToJson(SubTrack->Appearance));
+
+	// Sections
+	TArray<UMovieSceneSection*> Sections = SubTrack->GetAllSections();
+	Sections.Sort([](const UMovieSceneSection& A, const UMovieSceneSection& B)
+	{
+		return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame();
+	});
+
+	TArray<TSharedPtr<FJsonValue>> SectionArray;
+	for (const UMovieSceneSection* Section : Sections)
+	{
+		const UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section);
+		if (!SubSection) continue;
+
+		const double StartSeconds = TickResolution.AsSeconds(Section->GetInclusiveStartFrame());
+		const double EndSeconds = TickResolution.AsSeconds(Section->GetExclusiveEndFrame());
+
+		TSharedRef<FJsonObject> SObj = MakeShared<FJsonObject>();
+		SObj->SetNumberField(TEXT("start"), StartSeconds);
+		SObj->SetNumberField(TEXT("end"), EndSeconds);
+		SObj->SetStringField(TEXT("text"), SubSection->SubtitleText.ToString());
+		SObj->SetObjectField(TEXT("barColor"), LinearColorToJson(SubSection->BarColor));
+		SObj->SetBoolField(TEXT("typewriterEffect"), SubSection->bTypewriterEffect);
+		SObj->SetNumberField(TEXT("typewriterCharInterval"), SubSection->TypewriterCharInterval);
+		SObj->SetBoolField(TEXT("overrideSpeakerName"), SubSection->bOverrideSpeakerName);
+		if (SubSection->bOverrideSpeakerName)
+		{
+			SObj->SetStringField(TEXT("speakerNameOverride"), SubSection->SpeakerNameOverride.ToString());
+		}
+		SObj->SetBoolField(TEXT("overrideAppearance"), SubSection->bOverrideAppearance);
+		if (SubSection->bOverrideAppearance)
+		{
+			SObj->SetObjectField(TEXT("appearance"), AppearanceToJson(SubSection->AppearanceOverride));
+		}
+
+		SectionArray.Add(MakeShared<FJsonValueObject>(SObj));
+	}
+	TrackObj->SetArrayField(TEXT("sections"), SectionArray);
+
+	return TrackObj;
+}
+
+void FSubtitleTrackEditor::ExportAllTracksToClipboard()
+{
+	UMovieScene* MovieScene = GetFocusedMovieScene();
+	if (!MovieScene) return;
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+
+	// Collect all subtitle tracks
+	TArray<TSharedPtr<FJsonValue>> TracksArray;
+	for (UMovieSceneTrack* Track : MovieScene->GetTracks())
+	{
+		UMovieSceneSubtitleTrack* SubTrack = Cast<UMovieSceneSubtitleTrack>(Track);
+		if (!SubTrack) continue;
+
+		TracksArray.Add(MakeShared<FJsonValueObject>(ExportSingleTrackToJson(SubTrack, TickResolution)));
+	}
+
+	if (TracksArray.Num() == 0) return;
+
+	TSharedRef<FJsonObject> RootObj = MakeShared<FJsonObject>();
+	RootObj->SetNumberField(TEXT("version"), 1);
+	RootObj->SetStringField(TEXT("format"), TEXT("SequencerSubtitles_AllTracks"));
+	RootObj->SetArrayField(TEXT("tracks"), TracksArray);
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(RootObj, Writer);
+
+	FPlatformApplicationMisc::ClipboardCopy(*OutputString);
+}
+
+void FSubtitleTrackEditor::ImportAllTracksFromClipboard()
+{
+	TSharedPtr<ISequencer> SequencerPtr = GetSequencer();
+	if (!SequencerPtr.IsValid()) return;
+
+	UMovieScene* MovieScene = GetFocusedMovieScene();
+	if (!MovieScene || MovieScene->IsReadOnly()) return;
+
+	FString ClipboardText;
+	FPlatformApplicationMisc::ClipboardPaste(ClipboardText);
+	if (ClipboardText.IsEmpty()) return;
+
+	TSharedPtr<FJsonObject> RootObj;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ClipboardText);
+	if (!FJsonSerializer::Deserialize(Reader, RootObj) || !RootObj.IsValid()) return;
+	if (!RootObj->HasField(TEXT("tracks"))) return;
+
+	const TArray<TSharedPtr<FJsonValue>>& TracksArray = RootObj->GetArrayField(TEXT("tracks"));
+	if (TracksArray.Num() == 0) return;
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+
+	const FScopedTransaction Transaction(LOCTEXT("ImportAllTracks_Transaction", "Import All Subtitle Tracks"));
+	MovieScene->Modify();
+
+	for (const TSharedPtr<FJsonValue>& TrackValue : TracksArray)
+	{
+		const TSharedPtr<FJsonObject>& TrackObj = TrackValue->AsObject();
+		if (!TrackObj.IsValid()) continue;
+
+		// Create a new subtitle track
+		UMovieSceneSubtitleTrack* NewTrack = MovieScene->AddTrack<UMovieSceneSubtitleTrack>();
+		if (!NewTrack) continue;
+
+		// Set display name
+		FString DisplayName;
+		if (TrackObj->TryGetStringField(TEXT("displayName"), DisplayName))
+		{
+			NewTrack->SetDisplayName(FText::FromString(DisplayName));
+		}
+
+		// Set track color
+		if (TrackObj->HasField(TEXT("trackColor")))
+		{
+			NewTrack->TrackColor = JsonToLinearColor(TrackObj->GetObjectField(TEXT("trackColor")));
+		}
+
+		// Set speaker override
+		if (TrackObj->HasField(TEXT("overrideSpeakerName")))
+		{
+			NewTrack->bOverrideSpeakerName = TrackObj->GetBoolField(TEXT("overrideSpeakerName"));
+		}
+		FString SpeakerStr;
+		if (TrackObj->TryGetStringField(TEXT("speakerNameOverride"), SpeakerStr))
+		{
+			NewTrack->SpeakerNameOverride = FText::FromString(SpeakerStr);
+		}
+
+		// Set track-level appearance
+		if (TrackObj->HasField(TEXT("appearance")))
+		{
+			NewTrack->Appearance = JsonToAppearance(TrackObj->GetObjectField(TEXT("appearance")));
+		}
+
+		// Create sections
+		if (TrackObj->HasField(TEXT("sections")))
+		{
+			const TArray<TSharedPtr<FJsonValue>>& SectionArray = TrackObj->GetArrayField(TEXT("sections"));
+			for (const TSharedPtr<FJsonValue>& SectionValue : SectionArray)
+			{
+				const TSharedPtr<FJsonObject>& SObj = SectionValue->AsObject();
+				if (!SObj.IsValid()) continue;
+
+				UMovieSceneSection* NewSection = NewTrack->CreateNewSection();
+				if (!NewSection) continue;
+
+				const double StartSeconds = SObj->GetNumberField(TEXT("start"));
+				const double EndSeconds = SObj->GetNumberField(TEXT("end"));
+				const FFrameNumber Start = (StartSeconds * TickResolution).FloorToFrame();
+				const FFrameNumber End = (EndSeconds * TickResolution).FloorToFrame();
+				NewSection->SetRange(TRange<FFrameNumber>(Start, End));
+
+				if (UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(NewSection))
+				{
+					ApplyJsonSectionProperties(SubSection, SObj);
+				}
+
+				int32 OverlapPriority = 0;
+				for (UMovieSceneSection* S : NewTrack->GetAllSections())
+				{
+					OverlapPriority = FMath::Max(S->GetOverlapPriority() + 1, OverlapPriority);
+				}
+				NewSection->SetOverlapPriority(OverlapPriority);
+
+				NewTrack->AddSection(*NewSection);
+			}
+		}
+	}
+
+	SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
 }
 
 #undef LOCTEXT_NAMESPACE
