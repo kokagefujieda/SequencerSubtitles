@@ -59,6 +59,7 @@ public:
 
 #if WITH_EDITORONLY_DATA
 	virtual FText GetDefaultDisplayName() const override;
+	virtual FSlateColor GetLabelColor(const FMovieSceneLabelParams& LabelParams) const override;
 #endif
 
 private:

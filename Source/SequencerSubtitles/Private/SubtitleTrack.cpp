@@ -100,6 +100,16 @@ FText UMovieSceneSubtitleTrack::GetDefaultDisplayName() const
 {
 	return LOCTEXT("TrackName", "Subtitle");
 }
+
+FSlateColor UMovieSceneSubtitleTrack::GetLabelColor(const FMovieSceneLabelParams& LabelParams) const
+{
+	FText CurrentName = GetDisplayName();
+	if (CurrentName.IsEmpty() || CurrentName.EqualTo(GetDefaultDisplayName()))
+	{
+		return FSlateColor::UseSubduedForeground();
+	}
+	return FSlateColor::UseForeground();
+}
 #endif
 
 #undef LOCTEXT_NAMESPACE
