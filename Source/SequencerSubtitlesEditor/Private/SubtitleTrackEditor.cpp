@@ -264,7 +264,11 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		.ToolTipText(LOCTEXT("ExportTooltip", "Export all subtitle texts to clipboard (TSV with timing)"))
 		[
 			SNew(SImage)
+#if ENGINE_MINOR_VERSION >= 7
 			.Image(FAppStyle::Get().GetBrush("Icons.Export"))
+#else
+			.Image(FAppStyle::Get().GetBrush("Icons.ArrowUp"))
+#endif
 			.DesiredSizeOverride(IconSize)
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		];
