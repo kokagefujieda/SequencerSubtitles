@@ -83,6 +83,10 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
 	FMargin ScreenPadding = FMargin(40.0f, 20.0f);
 
+	/** Pixel offset from the anchor position. Typically set by dragging the subtitle in the editor viewport. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	FVector2D ScreenOffset = FVector2D::ZeroVector;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
 	ESubtitleEntranceType EntranceType = ESubtitleEntranceType::None;
 

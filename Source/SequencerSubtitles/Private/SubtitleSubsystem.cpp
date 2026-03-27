@@ -25,6 +25,9 @@
 #include "SLevelViewport.h"
 #include "Modules/ModuleManager.h"
 #include "Slate/SceneViewport.h"
+#include "SSubtitleDragHandle.h"
+#include "SubtitleSection.h"
+#include "SubtitleTrack.h"
 #endif
 
 void USubtitleSubsystem::EnsureSlateWidgets()
@@ -99,6 +102,25 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 			MessageWindowBox.ToSharedRef()
 		];
 
+#if WITH_EDITOR
+	DragHandle = SNew(SSubtitleDragHandle)
+		[
+			ContentVerticalBox.ToSharedRef()
+		];
+	DragHandle->SetOnDragFinished(FOnSubtitleDragFinished::CreateUObject(this, &USubtitleSubsystem::OnDragOffsetChanged));
+
+	WidgetOverlay = SNew(SOverlay)
+		+ SOverlay::Slot()
+		.Expose(OverlaySlot)
+		.VAlign(VAlign_Bottom)
+		.Padding(40.f, 20.f)
+		[
+			DragHandle.ToSharedRef()
+		];
+
+	// Pass overlay to drag handle for viewport-bounds clamping
+	DragHandle->SetViewportWidget(WidgetOverlay);
+#else
 	WidgetOverlay = SNew(SOverlay)
 		+ SOverlay::Slot()
 		.Expose(OverlaySlot)
@@ -107,6 +129,7 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 		[
 			ContentVerticalBox.ToSharedRef()
 		];
+#endif
 
 	WidgetOverlay->SetVisibility(EVisibility::Hidden);
 
@@ -619,6 +642,10 @@ void USubtitleSubsystem::Deinitialize()
 	}
 
 	RemoveFromViewport();
+#if WITH_EDITOR
+	DragHandle.Reset();
+	ActiveSection.Reset();
+#endif
 	DPIScalerWidget.Reset();
 	WidgetOverlay.Reset();
 	ContentVerticalBox.Reset();
@@ -642,6 +669,47 @@ void USubtitleSubsystem::Deinitialize()
 
 	Super::Deinitialize();
 }
+
+#if WITH_EDITOR
+void USubtitleSubsystem::SetActiveSection(UMovieSceneSeqSubtitleSection* InSection)
+{
+	ActiveSection = InSection;
+
+	// Disable drag during PIE / game worlds
+	if (DragHandle.IsValid())
+	{
+		const UWorld* World = GetWorld();
+		const bool bIsGameWorld = World && World->IsGameWorld();
+		DragHandle->SetDragEnabled(!bIsGameWorld);
+	}
+}
+
+void USubtitleSubsystem::OnDragOffsetChanged(FVector2D NewOffset)
+{
+	UMovieSceneSeqSubtitleSection* Section = ActiveSection.Get();
+	if (!Section)
+	{
+		return;
+	}
+
+	if (Section->bOverrideAppearance)
+	{
+		Section->Modify();
+		Section->AppearanceOverride.ScreenOffset = NewOffset;
+	}
+	else
+	{
+		UMovieSceneSubtitleTrack* Track = Section->GetTypedOuter<UMovieSceneSubtitleTrack>();
+		if (Track)
+		{
+			Track->Modify();
+			Track->Appearance.ScreenOffset = NewOffset;
+		}
+	}
+
+	CurrentAppearance.ScreenOffset = NewOffset;
+}
+#endif
 
 void USubtitleSubsystem::ApplyAppearance(const FSubtitleAppearance& InAppearance)
 {
@@ -695,6 +763,18 @@ void USubtitleSubsystem::ApplyAppearance(const FSubtitleAppearance& InAppearance
 			MessageWindowBox->SetHeightOverride(FOptionalSize());
 		}
 	}
+
+	// Apply pixel offset via RenderTransform (separate from SubtitleBorder animation transform)
+	if (ContentVerticalBox.IsValid())
+	{
+		ContentVerticalBox->SetRenderTransform(FSlateRenderTransform(InAppearance.ScreenOffset));
+	}
+#if WITH_EDITOR
+	if (DragHandle.IsValid())
+	{
+		DragHandle->SetCurrentOffset(InAppearance.ScreenOffset);
+	}
+#endif
 
 	if (SubtitleTextBlock.IsValid())
 	{

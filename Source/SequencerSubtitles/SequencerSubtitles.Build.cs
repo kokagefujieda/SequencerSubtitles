@@ -26,7 +26,8 @@ public class SequencerSubtitles : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
-				"ApplicationCore"
+				"ApplicationCore",
+				"InputCore"
 			}
 		);
 		

@@ -10,6 +10,10 @@
 
 class STextBlock;
 class SBorder;
+class UMovieSceneSeqSubtitleSection;
+#if WITH_EDITOR
+class SSubtitleDragHandle;
+#endif
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnSubtitleStarted,
@@ -78,6 +82,14 @@ public:
 	/** Apply MaxCharsPerLine wrapping to a string. Returns the wrapped version. */
 	static FString WrapTextByCharLimit(const FString& InText, int32 MaxCharsPerLine);
 
+#if WITH_EDITOR
+	/** Set the currently active section (called from eval token for drag write-back). */
+	void SetActiveSection(UMovieSceneSeqSubtitleSection* InSection);
+
+	/** Called by drag handle when the user finishes dragging. Writes offset back to section/track. */
+	void OnDragOffsetChanged(FVector2D NewOffset);
+#endif
+
 private:
 	void EnsureSlateWidgets();
 	void AddToViewport();
@@ -128,6 +140,11 @@ private:
 
 	bool bAddedToViewport = false;
 	bool bIsEditorViewport = false;
+
+#if WITH_EDITOR
+	TSharedPtr<SSubtitleDragHandle> DragHandle;
+	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> ActiveSection;
+#endif
 
 	bool bAnimating = false;
 	bool bExitAnimation = false;

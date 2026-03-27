@@ -5,6 +5,8 @@
 #include "SubtitleTrack.h"
 #include "SubtitleSubsystem.h"
 #include "MovieScene.h"
+#include "MovieScenePossessable.h"
+#include "MovieSceneSpawnable.h"
 #include "IMovieScenePlayer.h"
 #include "MovieSceneExecutionToken.h"
 #include "Engine/World.h"
@@ -18,6 +20,9 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 	FSubtitleAppearance Appearance;
 	/** -1 = show full text; >= 0 = typewriter: show this many characters. */
 	int32         VisibleCharCount = -1;
+#if WITH_EDITOR
+	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> SourceSection;
+#endif
 
 	FSubtitleExecutionToken(const FText& InSpeakerName, const FText& InText, FLinearColor InColor,
 		const FSubtitleAppearance& InAppearance, int32 InVisibleCharCount)
@@ -39,6 +44,10 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 
 		USubtitleSubsystem* Subsystem = World->GetSubsystem<USubtitleSubsystem>();
 		if (!Subsystem) { return; }
+
+#if WITH_EDITOR
+		Subsystem->SetActiveSection(SourceSection.Get());
+#endif
 
 		// Already showing this subtitle
 		if (Subsystem->bIsSubtitleActive && Subsystem->CurrentSubtitleText.EqualTo(SubtitleText))
@@ -80,13 +89,22 @@ FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection
 	else if (Track)
 	{
 		bool bFoundBindingName = false;
-		if (const UMovieScene* MovieScene = Track->GetTypedOuter<UMovieScene>())
+		if (UMovieScene* MovieScene = Track->GetTypedOuter<UMovieScene>())
 		{
-			for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+			for (const FMovieSceneBinding& Binding : const_cast<const UMovieScene*>(MovieScene)->GetBindings())
 			{
 				if (Binding.GetTracks().Contains(Track))
 				{
-					FString BindingName = Binding.GetName();
+					const FGuid& BindingGuid = Binding.GetObjectGuid();
+					FString BindingName;
+					if (FMovieScenePossessable* Possessable = MovieScene->FindPossessable(BindingGuid))
+					{
+						BindingName = Possessable->GetName();
+					}
+					else if (FMovieSceneSpawnable* Spawnable = MovieScene->FindSpawnable(BindingGuid))
+					{
+						BindingName = Spawnable->GetName();
+					}
 					if (!BindingName.IsEmpty())
 					{
 						SpeakerName = FText::FromString(BindingName);
@@ -123,6 +141,10 @@ FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection
 	{
 		SubtitleText = InSection.SubtitleText;
 	}
+
+#if WITH_EDITOR
+	SourceSection = const_cast<UMovieSceneSeqSubtitleSection*>(&InSection);
+#endif
 
 	bTypewriterEffect = InSection.bTypewriterEffect;
 	if (bTypewriterEffect)
@@ -196,5 +218,9 @@ void FSubtitleEvalTemplate::Evaluate(
 		}
 	}
 
-	ExecutionTokens.Add(FSubtitleExecutionToken(SpeakerName, SubtitleText, BarColor, Appearance, VisibleCharCount));
+	FSubtitleExecutionToken Token(SpeakerName, SubtitleText, BarColor, Appearance, VisibleCharCount);
+#if WITH_EDITOR
+	Token.SourceSection = SourceSection;
+#endif
+	ExecutionTokens.Add(MoveTemp(Token));
 }

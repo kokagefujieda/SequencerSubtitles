@@ -101,6 +101,16 @@ FText UMovieSceneSubtitleTrack::GetDefaultDisplayName() const
 	return LOCTEXT("TrackName", "Subtitle");
 }
 
+bool UMovieSceneSubtitleTrack::ValidateDisplayName(const FText& NewDisplayName, FText& OutErrorMessage) const
+{
+	// Allow empty name — it will revert to default "Subtitle" (no speaker displayed)
+	if (NewDisplayName.IsEmpty())
+	{
+		return true;
+	}
+	return Super::ValidateDisplayName(NewDisplayName, OutErrorMessage);
+}
+
 FSlateColor UMovieSceneSubtitleTrack::GetLabelColor(const FMovieSceneLabelParams& LabelParams) const
 {
 	FText CurrentName = GetDisplayName();

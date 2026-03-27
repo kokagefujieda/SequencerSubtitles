@@ -43,6 +43,11 @@ struct SEQUENCERSUBTITLES_API FSubtitleEvalTemplate : public FMovieSceneEvalTemp
 	UPROPERTY()
 	FFrameRate TypewriterTickResolution = FFrameRate(24000, 1);
 
+#if WITH_EDITOR
+	/** Transient pointer to source section for drag-based position editing. */
+	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> SourceSection;
+#endif
+
 private:
 	virtual UScriptStruct& GetScriptStructImpl() const override { return *StaticStruct(); }
 	virtual void Evaluate(const FMovieSceneEvaluationOperand& Operand, const FMovieSceneContext& Context, const FPersistentEvaluationData& PersistentData, FMovieSceneExecutionTokens& ExecutionTokens) const override;

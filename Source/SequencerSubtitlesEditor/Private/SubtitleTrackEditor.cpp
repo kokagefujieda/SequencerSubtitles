@@ -14,14 +14,10 @@
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
-#include "Widgets/Input/SComboButton.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Text/STextBlock.h"
-#include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Images/SImage.h"
-#include "Brushes/SlateImageBrush.h"
-#include "Misc/Paths.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "JsonObjectConverter.h"
 #include "Serialization/JsonSerializer.h"
@@ -33,22 +29,16 @@
 
 #define LOCTEXT_NAMESPACE "SubtitleTrackEditor"
 
-// --- Icon brushes (SVG-based, works across UE 5.5/5.6/5.7) ---
+// --- Icon brushes (ArrowUp/ArrowDown — registered in all UE 5.5/5.6/5.7) ---
 
 static const FSlateBrush* GetExportIconBrush()
 {
-	static FSlateVectorImageBrush Brush(
-		FPaths::EngineContentDir() / TEXT("Slate/Starship/Common/export.svg"),
-		FVector2D(16.0f, 16.0f));
-	return &Brush;
+	return FAppStyle::Get().GetBrush("Icons.ArrowUp");
 }
 
 static const FSlateBrush* GetImportIconBrush()
 {
-	static FSlateVectorImageBrush Brush(
-		FPaths::EngineContentDir() / TEXT("Slate/Starship/Common/import.svg"),
-		FVector2D(16.0f, 16.0f));
-	return &Brush;
+	return FAppStyle::Get().GetBrush("Icons.ArrowDown");
 }
 
 // --- FSubtitleSectionUI ---
@@ -266,112 +256,75 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 			SNew(STextBlock)
 			.TextStyle(FAppStyle::Get(), "NormalText.Important")
 			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
-			.Text(LOCTEXT("AddSubtitleSection", "Subtitle"))
+			.Text(LOCTEXT("AddSubtitleSection", "+ Section"))
 		];
 #endif
 
-	// --- Export button ---
+	// --- Export button (per-track) ---
 	TSharedRef<SWidget> ExportButton =
 		SNew(SButton)
-		.ButtonStyle(FAppStyle::Get(), "FlatButton")
-		.ContentPadding(FMargin(2, 0))
-		.OnClicked_Lambda([this, WeakTrack]() -> FReply
+		.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+		.ContentPadding(FMargin(0))
+		.OnClicked_Lambda([this, Track]() -> FReply
 		{
-			if (UMovieSceneTrack* TrackPtr = WeakTrack.Get())
-			{
-				ExportSectionsToClipboard(TrackPtr);
-			}
+			ExportSectionsToClipboard(Track);
 			return FReply::Handled();
 		})
-		.ToolTipText(LOCTEXT("ExportTooltip", "Export all sections to clipboard as JSON (text, timing, appearance)"))
+		.ToolTipText(LOCTEXT("ExportTooltip", "Export this track's sections to clipboard as JSON"))
 		[
 			SNew(SImage)
 			.Image(GetExportIconBrush())
-			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
+			.DesiredSizeOverride(FVector2D(12.0f, 12.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		];
 
-	// --- Import button ---
+	// --- Import button (per-track) ---
 	TSharedRef<SWidget> ImportButton =
 		SNew(SButton)
-		.ButtonStyle(FAppStyle::Get(), "FlatButton")
-		.ContentPadding(FMargin(2, 0))
-		.OnClicked_Lambda([this, WeakTrack]() -> FReply
+		.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+		.ContentPadding(FMargin(0))
+		.OnClicked_Lambda([this, Track]() -> FReply
 		{
-			if (UMovieSceneTrack* TrackPtr = WeakTrack.Get())
-			{
-				ImportSectionsFromClipboard(TrackPtr);
-			}
+			ImportSectionsFromClipboard(Track);
 			return FReply::Handled();
 		})
-		.ToolTipText(LOCTEXT("ImportTooltip", "Import sections from clipboard (JSON, TSV, or plain text)"))
+		.ToolTipText(LOCTEXT("ImportTooltip", "Import sections from clipboard into this track"))
 		[
 			SNew(SImage)
 			.Image(GetImportIconBrush())
-			.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
+			.DesiredSizeOverride(FVector2D(12.0f, 12.0f))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		];
 
-	// --- Color preset dropdown ---
-	TSharedRef<SWidget> ColorButton =
-		SNew(SComboButton)
-		.ButtonStyle(FAppStyle::Get(), "FlatButton")
-		.ContentPadding(FMargin(0))
-		.HasDownArrow(false)
-		.OnGetMenuContent_Lambda([this, WeakTrack]() -> TSharedRef<SWidget>
-		{
-			FMenuBuilder MenuBuilder(true, nullptr);
-			if (UMovieSceneTrack* TrackPtr = WeakTrack.Get())
-			{
-				BuildColorPresetMenu(MenuBuilder, TrackPtr);
-			}
-			return MenuBuilder.MakeWidget();
-		})
-		.ToolTipText(LOCTEXT("ColorPresetTooltip", "Change track color (applies to new sections)"))
-		.ButtonContent()
-		[
-			SNew(SColorBlock)
-			.Color_Lambda([WeakTrack]() -> FLinearColor
-			{
-				if (UMovieSceneSubtitleTrack* SubTrack = Cast<UMovieSceneSubtitleTrack>(WeakTrack.Get()))
-				{
-					return SubTrack->TrackColor;
-				}
-				return FLinearColor::White;
-			})
-			.Size(FVector2D(14.0f, 14.0f))
-		];
-
-	// --- Compose all buttons ---
+	// --- Compose: transparent spacer pushes buttons right to avoid overlapping track name ---
 	return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		[
+			// Invisible spacer to offset buttons away from track name
+			SNew(SBox)
+			.WidthOverride(30.0f)
+		]
 		+ SHorizontalBox::Slot()
 		.AutoWidth()
 		.VAlign(VAlign_Center)
 		[
 			AddButton
 		]
-		// Spacer to push utility buttons toward center
-		+ SHorizontalBox::Slot()
-		.FillWidth(1.0f)
 		+ SHorizontalBox::Slot()
 		.AutoWidth()
 		.VAlign(VAlign_Center)
+		.Padding(2, 0, 0, 0)
 		[
 			ExportButton
 		]
 		+ SHorizontalBox::Slot()
 		.AutoWidth()
 		.VAlign(VAlign_Center)
-		.Padding(2, 0, 0, 0)
+		.Padding(1, 0, 0, 0)
 		[
 			ImportButton
-		]
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		.Padding(4, 0, 0, 0)
-		[
-			ColorButton
 		];
 }
 
@@ -384,6 +337,26 @@ void FSubtitleTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMov
 			LOCTEXT("AddSubtitleSectionCtxTooltip", "Add a new subtitle section at the current playhead position"),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::AddNewSectionToTrack, Track))
+		);
+	}
+	MenuBuilder.EndSection();
+
+	MenuBuilder.BeginSection(TEXT("SubtitlePosition"), LOCTEXT("SubtitlePositionMenu", "Position"));
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ResetScreenPosition", "Reset Screen Position"),
+			LOCTEXT("ResetScreenPositionTooltip", "Reset the drag offset (ScreenOffset) to zero"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([Track]()
+			{
+				UMovieSceneSubtitleTrack* SubTrack = Cast<UMovieSceneSubtitleTrack>(Track);
+				if (SubTrack)
+				{
+					const FScopedTransaction Transaction(LOCTEXT("ResetScreenPos_Transaction", "Reset Screen Position"));
+					SubTrack->Modify();
+					SubTrack->Appearance.ScreenOffset = FVector2D::ZeroVector;
+				}
+			}))
 		);
 	}
 	MenuBuilder.EndSection();
@@ -1239,6 +1212,17 @@ void FSubtitleTrackEditor::ImportAllTracksFromClipboard()
 	const FScopedTransaction Transaction(LOCTEXT("ImportAllTracks_Transaction", "Import All Subtitle Tracks"));
 	MovieScene->Modify();
 
+	// Remove all existing subtitle tracks first so ordering is preserved
+	TArray<UMovieSceneTrack*> ExistingTracks = MovieScene->GetTracks();
+	for (UMovieSceneTrack* Track : ExistingTracks)
+	{
+		if (Cast<UMovieSceneSubtitleTrack>(Track))
+		{
+			MovieScene->RemoveTrack(*Track);
+		}
+	}
+
+	// Recreate tracks in the exported order
 	for (const TSharedPtr<FJsonValue>& TrackValue : TracksArray)
 	{
 		const TSharedPtr<FJsonObject>& TrackObj = TrackValue->AsObject();
