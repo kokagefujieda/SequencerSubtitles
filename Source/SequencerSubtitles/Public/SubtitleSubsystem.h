@@ -6,10 +6,12 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "SubtitleSettings.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/SBoxPanel.h"
 #include "SubtitleSubsystem.generated.h"
 
 class STextBlock;
 class SBorder;
+class SSubtitleSeparatorLine;
 class UMovieSceneSeqSubtitleSection;
 #if WITH_EDITOR
 class SSubtitleDragHandle;
@@ -107,15 +109,20 @@ private:
 	TSharedPtr<class SVerticalBox> ContentVerticalBox;
 	TSharedPtr<STextBlock>       SpeakerNameTextBlock;
 	TSharedPtr<class SBox>       SeparatorBox;
+	TSharedPtr<SOverlay>         SeparatorOverlay;
+	TSharedPtr<SSubtitleSeparatorLine> SeparatorLineWidget;
 	TSharedPtr<SBorder>          SeparatorLineBorder;
 	TSharedPtr<STextBlock>       SubtitleTextBlock;
 	TSharedPtr<SBorder>          SubtitleBorder;
 	TSharedPtr<class SBox>       MessageWindowBox;
 	TSharedPtr<class SBox>       TypewriterSizerBox;
 	SOverlay::FOverlaySlot*      OverlaySlot = nullptr;
+	SVerticalBox::FSlot*         SpeakerNameSlot = nullptr;
+	SVerticalBox::FSlot*         SeparatorSlot   = nullptr;
 
-	// Custom separator brush (kept alive for SBorder pointer stability)
+	// Custom brushes (kept alive for SBorder pointer stability)
 	FSlateBrush CustomSeparatorBrush;
+	FSlateBrush WindowBrush;
 
 	UPROPERTY()
 	FText CurrentSpeakerName;

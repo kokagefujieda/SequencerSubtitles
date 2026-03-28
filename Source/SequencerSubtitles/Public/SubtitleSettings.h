@@ -31,14 +31,14 @@ enum class ESubtitleHorizontalPosition : uint8
 UENUM(BlueprintType)
 enum class ESubtitleEntranceType : uint8
 {
-	None         UMETA(DisplayName = "None"),
-	FadeIn       UMETA(DisplayName = "Fade In"),
-	SlideLeft    UMETA(DisplayName = "Slide Left"),
-	SlideRight   UMETA(DisplayName = "Slide Right"),
-	SlideTop     UMETA(DisplayName = "Slide Top"),
-	SlideBottom  UMETA(DisplayName = "Slide Bottom"),
+	None          UMETA(DisplayName = "None"),
+	FadeIn        UMETA(DisplayName = "Fade In"),
+	SlideLeft     UMETA(DisplayName = "Slide Left"),
+	SlideRight    UMETA(DisplayName = "Slide Right"),
+	SlideTop      UMETA(DisplayName = "Slide Top"),
+	SlideBottom   UMETA(DisplayName = "Slide Bottom"),
 	ScaleVertical UMETA(DisplayName = "Scale Vertical"),
-	ScaleUp      UMETA(DisplayName = "Scale Up"),
+	ScaleUp       UMETA(DisplayName = "Scale Up"),
 };
 
 /** Horizontal text alignment for subtitle display. */
@@ -50,49 +50,136 @@ enum class ESubtitleTextAlignment : uint8
 	Right  UMETA(DisplayName = "Right"),
 };
 
+/** Background style of the message window. */
+UENUM(BlueprintType)
+enum class EMessageWindowStyle : uint8
+{
+	Square  UMETA(DisplayName = "Square"),
+	Rounded UMETA(DisplayName = "Rounded"),
+	Image   UMETA(DisplayName = "Image"),
+};
+
+/** Tiling/scaling mode for a custom separator image. */
+UENUM(BlueprintType)
+enum class ELineImageTiling : uint8
+{
+	Stretch        UMETA(DisplayName = "Stretch (fill box)"),
+	TileHorizontal UMETA(DisplayName = "Tile Horizontal"),
+	TileVertical   UMETA(DisplayName = "Tile Vertical"),
+	TileBoth       UMETA(DisplayName = "Tile Both"),
+};
+
+/** Alignment of the speaker name row. FollowSubtitle mirrors the subtitle's TextAlignment. */
+UENUM(BlueprintType)
+enum class ESpeakerNameAlignment : uint8
+{
+	FollowSubtitle UMETA(DisplayName = "Follow Subtitle (Default)"),
+	Left           UMETA(DisplayName = "Left"),
+	Center         UMETA(DisplayName = "Center"),
+	Right          UMETA(DisplayName = "Right"),
+};
+
 /** Per-track / per-section subtitle visual configuration. */
 USTRUCT(BlueprintType)
 struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
-		meta = (AllowedClasses = "/Script/Engine.Font,/Script/Engine.FontFace"))
-	TSoftObjectPtr<UObject> FontAsset;
+	// ---- Layout ----
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
-		meta = (ClampMin = "8", ClampMax = "128"))
-	int32 FontSize = 24;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
-	FLinearColor TextColor = FLinearColor::White;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
-	FLinearColor BackgroundColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Layout")
 	ESubtitleVerticalPosition VerticalPosition = ESubtitleVerticalPosition::Bottom;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Layout")
 	ESubtitleHorizontalPosition HorizontalPosition = ESubtitleHorizontalPosition::Center;
 
-	/** Horizontal alignment of the subtitle text. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
-	ESubtitleTextAlignment TextAlignment = ESubtitleTextAlignment::Center;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Layout")
 	FMargin ScreenPadding = FMargin(40.0f, 20.0f);
 
 	/** Pixel offset from the anchor position. Typically set by dragging the subtitle in the editor viewport. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Layout")
 	FVector2D ScreenOffset = FVector2D::ZeroVector;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
+	// ---- Subtitle Text ----
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text",
+		meta = (AllowedClasses = "/Script/Engine.Font,/Script/Engine.FontFace"))
+	TSoftObjectPtr<UObject> FontAsset;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text",
+		meta = (ClampMin = "8", ClampMax = "128"))
+	int32 FontSize = 24;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text")
+	FLinearColor TextColor = FLinearColor::White;
+
+	/** Horizontal alignment of the subtitle text. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text")
+	ESubtitleTextAlignment TextAlignment = ESubtitleTextAlignment::Center;
+
+	/**
+	 * Maximum characters per line before automatic line wrapping.
+	 * 0 = no limit (rely on auto-wrap).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text",
+		meta = (ClampMin = "0", UIMin = "0"))
+	int32 MaxCharsPerLine = 0;
+
+	// ---- Message Window ----
+
+	/** Background style: Square, Rounded corners, or custom Image. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window")
+	EMessageWindowStyle WindowStyle = EMessageWindowStyle::Square;
+
+	/** Background color (alpha controls opacity for Square and Rounded styles). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window")
+	FLinearColor BackgroundColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
+
+	/** Opacity of the message window background (0 = transparent, 1 = opaque). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float WindowOpacity = 0.5f;
+
+	/** Corner radius in pixels when WindowStyle is Rounded. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window",
+		meta = (EditCondition = "WindowStyle == EMessageWindowStyle::Rounded", ClampMin = "0", UIMin = "0"))
+	float WindowCornerRadius = 12.0f;
+
+	/** Custom background image when WindowStyle is Image. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window",
+		meta = (EditCondition = "WindowStyle == EMessageWindowStyle::Image"))
+	TSoftObjectPtr<UTexture2D> WindowImage;
+
+	/**
+	 * Fixed height of the message window in pixels (before DPI scaling).
+	 * 0 = auto-size (expands with text).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window",
+		meta = (ClampMin = "0", UIMin = "0"))
+	float MessageWindowHeight = 120.0f;
+
+	// ---- Entrance / Exit ----
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entrance / Exit")
 	ESubtitleEntranceType EntranceType = ESubtitleEntranceType::None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entrance / Exit",
 		meta = (ClampMin = "0.0", ClampMax = "3.0", EditCondition = "EntranceType != ESubtitleEntranceType::None"))
 	float EntranceDuration = 0.3f;
+
+	/** When true, exit animation uses ExitType/ExitDuration instead of reversing EntranceType. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entrance / Exit")
+	bool bOverrideExitAnimation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entrance / Exit",
+		meta = (EditCondition = "bOverrideExitAnimation"))
+	ESubtitleEntranceType ExitType = ESubtitleEntranceType::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entrance / Exit",
+		meta = (ClampMin = "0.0", ClampMax = "3.0", EditCondition = "bOverrideExitAnimation && ExitType != ESubtitleEntranceType::None"))
+	float ExitDuration = 0.3f;
+
+	// ---- Typewriter ----
 
 	/** Sound to play per character during typewriter effect. Leave empty for silent. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Typewriter")
@@ -105,21 +192,11 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 
 	/**
 	 * Maximum lines shown per page during typewriter effect (BotW-style paging).
-	 * When text exceeds this, earlier lines are cleared and the next page begins.
 	 * 0 = no limit (show all lines at once).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Typewriter",
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 MaxLinesPerPage = 2;
-
-	/**
-	 * Maximum characters per line before automatic line wrapping.
-	 * When the subtitle text exceeds this on any single line, a line break is
-	 * inserted at the last fitting character. 0 = no limit (rely on auto-wrap).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
-		meta = (ClampMin = "0", UIMin = "0"))
-	int32 MaxCharsPerLine = 0;
 
 	// ---- Speaker Name ----
 
@@ -130,6 +207,13 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Speaker Name",
 		meta = (ClampMin = "8", ClampMax = "128"))
 	int32 SpeakerNameFontSize = 20;
+
+	/**
+	 * Horizontal alignment of the speaker name and separator line.
+	 * FollowSubtitle (default): automatically matches the subtitle's TextAlignment.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Speaker Name")
+	ESpeakerNameAlignment SpeakerNameAlignment = ESpeakerNameAlignment::FollowSubtitle;
 
 	// ---- Separator Line ----
 
@@ -147,37 +231,54 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 		meta = (EditCondition = "bShowSeparatorLine && bUseLineImage"))
 	TSoftObjectPtr<UTexture2D> LineImage;
 
-	/** Color of the default separator line (when not using a custom image). */
+	/** Color of the default separator line. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
 		meta = (EditCondition = "bShowSeparatorLine && !bUseLineImage"))
 	FLinearColor SeparatorLineColor = FLinearColor(0.8f, 0.7f, 0.3f, 0.8f);
 
 	/** Thickness of the default separator line in pixels. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
-		meta = (EditCondition = "bShowSeparatorLine && !bUseLineImage", ClampMin = "1", ClampMax = "8"))
+		meta = (EditCondition = "bShowSeparatorLine && !bUseLineImage", ClampMin = "1", ClampMax = "32"))
 	float SeparatorLineThickness = 1.0f;
 
 	/**
-	 * Fixed height of the message window in pixels (before DPI scaling).
-	 * 0 = auto-size (expands with text).
-	 * Set to a positive value (e.g. 120) to fix the window height so the
-	 * speaker name always appears at the same screen position.
+	 * Pixels to fade out on each end of the default line (0 = hard edge, no fade).
+	 * Has no effect in image mode.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
-		meta = (ClampMin = "0", UIMin = "0"))
-	float MessageWindowHeight = 120.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
+		meta = (EditCondition = "bShowSeparatorLine && !bUseLineImage", ClampMin = "0", UIMin = "0"))
+	float SeparatorFadeLength = 30.0f;
 
-	/** When true, exit animation uses ExitType/ExitDuration instead of reversing EntranceType. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance")
-	bool bOverrideExitAnimation = false;
+	/** Height of the separator image in pixels. 0 = use image's natural height. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
+		meta = (EditCondition = "bShowSeparatorLine && bUseLineImage", ClampMin = "0", UIMin = "0"))
+	float LineImageHeight = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
-		meta = (EditCondition = "bOverrideExitAnimation"))
-	ESubtitleEntranceType ExitType = ESubtitleEntranceType::None;
+	/**
+	 * Width of the separator in pixels.
+	 * Image mode: 0 = use image's natural width.
+	 * Line mode:  0 = fill available width.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
+		meta = (EditCondition = "bShowSeparatorLine", ClampMin = "0", UIMin = "0"))
+	float SeparatorWidth = 300.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Appearance",
-		meta = (ClampMin = "0.0", ClampMax = "3.0", EditCondition = "bOverrideExitAnimation && ExitType != ESubtitleEntranceType::None"))
-	float ExitDuration = 0.3f;
+	/** How the image is tiled / scaled inside the display box. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
+		meta = (EditCondition = "bShowSeparatorLine && bUseLineImage"))
+	ELineImageTiling LineImageTiling = ELineImageTiling::Stretch;
+
+	/** Tint color applied to the separator image (white = no tint). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
+		meta = (EditCondition = "bShowSeparatorLine && bUseLineImage"))
+	FLinearColor LineImageColor = FLinearColor::White;
+
+	/** Padding around the separator (Left, Top, Right, Bottom). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Separator Line",
+		meta = (EditCondition = "bShowSeparatorLine"))
+	FMargin SeparatorPadding = FMargin(20.0f, 2.0f, 20.0f, 4.0f);
+
+	// ---- Helpers ----
 
 	/** Returns the effective exit animation type. */
 	ESubtitleEntranceType GetEffectiveExitType() const

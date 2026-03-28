@@ -53,11 +53,17 @@ private:
 	void HandleAddSubtitleTrack();
 	void AddNewSectionToTrack(UMovieSceneTrack* Track);
 
-	/** Export all section texts to clipboard (TSV with timing). */
+	/** Export all section texts to clipboard as JSON. */
 	void ExportSectionsToClipboard(UMovieSceneTrack* Track);
 
-	/** Import section texts from clipboard (auto-detect TSV or plain). */
+	/** Export all section texts to clipboard as CSV. */
+	void ExportSectionsToClipboardCSV(UMovieSceneTrack* Track);
+
+	/** Import section texts from clipboard (auto-detect JSON or CSV). */
 	void ImportSectionsFromClipboard(UMovieSceneTrack* Track);
+
+	/** Import section texts from clipboard CSV. */
+	void ImportSectionsFromClipboardCSV(UMovieSceneTrack* Track);
 
 	/** Toggle bTypewriterEffect on all sections in the track. */
 	void ToggleTypewriterOnAllSections(UMovieSceneTrack* Track);

@@ -14,6 +14,7 @@
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SComboButton.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Text/STextBlock.h"
@@ -137,6 +138,14 @@ FReply FSubtitleSectionUI::OnSectionDoubleClicked(const FGeometry& SectionGeomet
 									const FScopedTransaction Transaction(LOCTEXT("EditSubtitleText_Transaction", "Edit Subtitle Text"));
 									Section->Modify();
 									Section->SubtitleText = InText;
+
+									// 行数を自動カウントして MaxLinesPerPage・MessageWindowHeight に反映
+									TArray<FString> Lines;
+									InText.ToString().ParseIntoArrayLines(Lines, false);
+									const int32 LineCount = FMath::Max(1, Lines.Num());
+									Section->bOverrideAppearance = true;
+									Section->AppearanceOverride.MaxLinesPerPage = LineCount;
+									Section->AppearanceOverride.MessageWindowHeight = 0.0f;
 								}
 							}
 							FSlateApplication::Get().DismissAllMenus();
@@ -260,17 +269,31 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 		];
 #endif
 
-	// --- Export button (per-track) ---
+	// --- Export button (per-track): dropdown JSON / CSV ---
 	TSharedRef<SWidget> ExportButton =
-		SNew(SButton)
+		SNew(SComboButton)
 		.ButtonStyle(FAppStyle::Get(), "SimpleButton")
 		.ContentPadding(FMargin(0))
-		.OnClicked_Lambda([this, Track]() -> FReply
+		.HasDownArrow(false)
+		.ToolTipText(LOCTEXT("ExportTooltip", "Export this track's sections to clipboard"))
+		.OnGetMenuContent_Lambda([this, Track]() -> TSharedRef<SWidget>
 		{
-			ExportSectionsToClipboard(Track);
-			return FReply::Handled();
+			FMenuBuilder MenuBuilder(true, nullptr);
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("ExportJSON", "Export as JSON"),
+				LOCTEXT("ExportJSONTooltip", "Copy sections to clipboard as JSON"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ExportSectionsToClipboard, Track))
+			);
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("ExportCSV", "Export as CSV"),
+				LOCTEXT("ExportCSVTooltip", "Copy sections to clipboard as CSV"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ExportSectionsToClipboardCSV, Track))
+			);
+			return MenuBuilder.MakeWidget();
 		})
-		.ToolTipText(LOCTEXT("ExportTooltip", "Export this track's sections to clipboard as JSON"))
+		.ButtonContent()
 		[
 			SNew(SImage)
 			.Image(GetExportIconBrush())
@@ -278,17 +301,31 @@ TSharedPtr<SWidget> FSubtitleTrackEditor::BuildOutlinerEditWidget(
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		];
 
-	// --- Import button (per-track) ---
+	// --- Import button (per-track): dropdown JSON / CSV ---
 	TSharedRef<SWidget> ImportButton =
-		SNew(SButton)
+		SNew(SComboButton)
 		.ButtonStyle(FAppStyle::Get(), "SimpleButton")
 		.ContentPadding(FMargin(0))
-		.OnClicked_Lambda([this, Track]() -> FReply
-		{
-			ImportSectionsFromClipboard(Track);
-			return FReply::Handled();
-		})
+		.HasDownArrow(false)
 		.ToolTipText(LOCTEXT("ImportTooltip", "Import sections from clipboard into this track"))
+		.OnGetMenuContent_Lambda([this, Track]() -> TSharedRef<SWidget>
+		{
+			FMenuBuilder MenuBuilder(true, nullptr);
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("ImportJSON", "Import from JSON"),
+				LOCTEXT("ImportJSONTooltip", "Import sections from clipboard JSON"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ImportSectionsFromClipboard, Track))
+			);
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("ImportCSV", "Import from CSV"),
+				LOCTEXT("ImportCSVTooltip", "Import sections from clipboard CSV"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ImportSectionsFromClipboardCSV, Track))
+			);
+			return MenuBuilder.MakeWidget();
+		})
+		.ButtonContent()
 		[
 			SNew(SImage)
 			.Image(GetImportIconBrush())
@@ -364,13 +401,13 @@ void FSubtitleTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMov
 	MenuBuilder.BeginSection(TEXT("SubtitleAllTracks"), LOCTEXT("SubtitleAllTracksMenu", "All Tracks"));
 	{
 		MenuBuilder.AddMenuEntry(
-			LOCTEXT("ExportAllTracks", "Export All Subtitle Tracks"),
-			LOCTEXT("ExportAllTracksTooltip", "Export all subtitle tracks in this sequence to clipboard as JSON"),
+			LOCTEXT("ExportAllTracksJSON", "Export All Tracks as JSON"),
+			LOCTEXT("ExportAllTracksJSONTooltip", "Export all subtitle tracks to clipboard as JSON"),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ExportAllTracksToClipboard))
 		);
 		MenuBuilder.AddMenuEntry(
-			LOCTEXT("ImportAllTracks", "Import All Subtitle Tracks"),
+			LOCTEXT("ImportAllTracks", "Import All Tracks from JSON"),
 			LOCTEXT("ImportAllTracksTooltip", "Import subtitle tracks from clipboard JSON (creates new tracks)"),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ImportAllTracksFromClipboard))
@@ -681,6 +718,157 @@ void FSubtitleTrackEditor::ExportSectionsToClipboard(UMovieSceneTrack* Track)
 	FJsonSerializer::Serialize(RootObj, Writer);
 
 	FPlatformApplicationMisc::ClipboardCopy(*OutputString);
+}
+
+// Escape a CSV field: wrap in quotes and double any internal quotes
+static FString CsvEscape(const FString& InStr)
+{
+	if (InStr.Contains(TEXT(",")) || InStr.Contains(TEXT("\"")) || InStr.Contains(TEXT("\n")))
+	{
+		return TEXT("\"") + InStr.Replace(TEXT("\""), TEXT("\"\"")) + TEXT("\"");
+	}
+	return InStr;
+}
+
+void FSubtitleTrackEditor::ExportSectionsToClipboardCSV(UMovieSceneTrack* Track)
+{
+	if (!Track) return;
+
+	UMovieScene* MovieScene = GetFocusedMovieScene();
+	if (!MovieScene) return;
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+
+	TArray<UMovieSceneSection*> Sections = Track->GetAllSections();
+	Sections.Sort([](const UMovieSceneSection& A, const UMovieSceneSection& B)
+	{
+		return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame();
+	});
+
+	FString Output = TEXT("start,end,text,speaker,typewriter,interval\n");
+	for (const UMovieSceneSection* Section : Sections)
+	{
+		const UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section);
+		if (!SubSection) continue;
+
+		const double StartSec = TickResolution.AsSeconds(Section->GetInclusiveStartFrame());
+		const double EndSec   = TickResolution.AsSeconds(Section->GetExclusiveEndFrame());
+
+		const FString Speaker = SubSection->bOverrideSpeakerName
+			? SubSection->SpeakerNameOverride.ToString() : FString();
+
+		Output += FString::Printf(TEXT("%f,%f,%s,%s,%s,%f\n"),
+			StartSec,
+			EndSec,
+			*CsvEscape(SubSection->SubtitleText.ToString()),
+			*CsvEscape(Speaker),
+			SubSection->bTypewriterEffect ? TEXT("true") : TEXT("false"),
+			SubSection->TypewriterCharInterval
+		);
+	}
+
+	FPlatformApplicationMisc::ClipboardCopy(*Output);
+}
+
+void FSubtitleTrackEditor::ImportSectionsFromClipboardCSV(UMovieSceneTrack* Track)
+{
+	if (!Track) return;
+
+	TSharedPtr<ISequencer> SequencerPtr = GetSequencer();
+	if (!SequencerPtr.IsValid()) return;
+
+	UMovieScene* MovieScene = GetFocusedMovieScene();
+	if (!MovieScene || MovieScene->IsReadOnly()) return;
+
+	FString ClipboardText;
+	FPlatformApplicationMisc::ClipboardPaste(ClipboardText);
+	ClipboardText.TrimStartAndEndInline();
+	if (ClipboardText.IsEmpty()) return;
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+
+	TArray<FString> Lines;
+	ClipboardText.ParseIntoArrayLines(Lines, false);
+	if (Lines.Num() < 2) return; // header + at least one row
+
+	// Skip header line
+	const FScopedTransaction Transaction(LOCTEXT("ImportCSV_Transaction", "Import Subtitle Sections from CSV"));
+	Track->Modify();
+
+	for (int32 i = 1; i < Lines.Num(); ++i)
+	{
+		const FString& Line = Lines[i].TrimStartAndEnd();
+		if (Line.IsEmpty()) continue;
+
+		// Simple CSV parse (handles quoted fields)
+		TArray<FString> Fields;
+		FString Current;
+		bool bInQuotes = false;
+		for (int32 ci = 0; ci < Line.Len(); ++ci)
+		{
+			const TCHAR Ch = Line[ci];
+			if (bInQuotes)
+			{
+				if (Ch == TEXT('"') && ci + 1 < Line.Len() && Line[ci + 1] == TEXT('"'))
+				{
+					Current += TEXT('"');
+					++ci;
+				}
+				else if (Ch == TEXT('"'))
+				{
+					bInQuotes = false;
+				}
+				else
+				{
+					Current += Ch;
+				}
+			}
+			else
+			{
+				if (Ch == TEXT('"'))
+				{
+					bInQuotes = true;
+				}
+				else if (Ch == TEXT(','))
+				{
+					Fields.Add(Current);
+					Current.Empty();
+				}
+				else
+				{
+					Current += Ch;
+				}
+			}
+		}
+		Fields.Add(Current);
+
+		if (Fields.Num() < 2) continue;
+
+		const double StartSec = FCString::Atod(*Fields[0]);
+		const double EndSec   = FCString::Atod(*Fields[1]);
+		if (EndSec <= StartSec) continue;
+
+		const FFrameNumber StartFrame = TickResolution.AsFrameNumber(StartSec);
+		const FFrameNumber EndFrame   = TickResolution.AsFrameNumber(EndSec);
+
+		UMovieSceneSeqSubtitleSection* NewSection = Cast<UMovieSceneSeqSubtitleSection>(
+			Track->CreateNewSection());
+		if (!NewSection) continue;
+
+		NewSection->SetRange(TRange<FFrameNumber>(StartFrame, EndFrame));
+		if (Fields.IsValidIndex(2)) { NewSection->SubtitleText = FText::FromString(Fields[2]); }
+		if (Fields.IsValidIndex(3) && !Fields[3].IsEmpty())
+		{
+			NewSection->bOverrideSpeakerName = true;
+			NewSection->SpeakerNameOverride  = FText::FromString(Fields[3]);
+		}
+		if (Fields.IsValidIndex(4)) { NewSection->bTypewriterEffect = Fields[4].TrimStartAndEnd().Equals(TEXT("true"), ESearchCase::IgnoreCase); }
+		if (Fields.IsValidIndex(5)) { NewSection->TypewriterCharInterval = FCString::Atof(*Fields[5]); }
+
+		Track->AddSection(*NewSection);
+	}
+
+	SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemsChanged);
 }
 
 static void ApplyJsonSectionProperties(UMovieSceneSeqSubtitleSection* SubSection, const TSharedPtr<FJsonObject>& SObj)

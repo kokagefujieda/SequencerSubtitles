@@ -15,6 +15,7 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Images/SImage.h"
+#include "SSubtitleSeparatorLine.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Kismet/GameplayStatics.h"
@@ -42,17 +43,24 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 		.Justification(ETextJustify::Center)
 		.Visibility(EVisibility::Collapsed);
 
-	// --- Separator line / image ---
+	// --- Separator: gradient line + image border, switched via visibility ---
+	SeparatorLineWidget = SNew(SSubtitleSeparatorLine);
+
 	SeparatorLineBorder = SNew(SBorder)
 		.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
 		.BorderBackgroundColor(FLinearColor::White)
-		.Padding(0);
+		.Padding(0)
+		.Visibility(EVisibility::Collapsed);
+
+	SeparatorOverlay = SNew(SOverlay)
+		+ SOverlay::Slot()[ SeparatorLineWidget.ToSharedRef() ]
+		+ SOverlay::Slot()[ SeparatorLineBorder.ToSharedRef() ];
 
 	SeparatorBox = SNew(SBox)
 		.HeightOverride(1.0f)
 		.Visibility(EVisibility::Collapsed)
 		[
-			SeparatorLineBorder.ToSharedRef()
+			SeparatorOverlay.ToSharedRef()
 		];
 
 	// --- Subtitle text ---
@@ -86,6 +94,7 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 		.AutoHeight()
 		.HAlign(HAlign_Center)
 		.Padding(0, 0, 0, 2)
+		.Expose(SpeakerNameSlot)
 		[
 			SpeakerNameTextBlock.ToSharedRef()
 		]
@@ -93,6 +102,7 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 		.AutoHeight()
 		.HAlign(HAlign_Center)
 		.Padding(20, 2, 20, 4)
+		.Expose(SeparatorSlot)
 		[
 			SeparatorBox.ToSharedRef()
 		]
@@ -244,31 +254,128 @@ void USubtitleSubsystem::ApplySpeakerAndSeparator(const FSubtitleAppearance& InA
 		{
 			if (InAppearance.bUseLineImage)
 			{
-				// Custom image
+				// Image mode: hide gradient line, show border
+				if (SeparatorLineWidget.IsValid())
+				{
+					SeparatorLineWidget->SetVisibility(EVisibility::Collapsed);
+				}
+
 				UTexture2D* Tex = InAppearance.LineImage.LoadSynchronous();
+				const float NaturalW = Tex ? static_cast<float>(Tex->GetSizeX()) : 64.f;
+				const float NaturalH = Tex ? static_cast<float>(Tex->GetSizeY()) : 4.f;
+
 				if (Tex)
 				{
+					ESlateBrushTileType::Type TileType = ESlateBrushTileType::NoTile;
+					switch (InAppearance.LineImageTiling)
+					{
+					case ELineImageTiling::TileHorizontal: TileType = ESlateBrushTileType::Horizontal; break;
+					case ELineImageTiling::TileVertical:   TileType = ESlateBrushTileType::Vertical;   break;
+					case ELineImageTiling::TileBoth:       TileType = ESlateBrushTileType::Both;        break;
+					default:                               TileType = ESlateBrushTileType::NoTile;      break;
+					}
+
 					CustomSeparatorBrush = FSlateBrush();
 					CustomSeparatorBrush.SetResourceObject(Tex);
-					CustomSeparatorBrush.ImageSize = FVector2D(Tex->GetSizeX(), Tex->GetSizeY());
+					CustomSeparatorBrush.ImageSize = FVector2D(NaturalW, NaturalH);
 					CustomSeparatorBrush.DrawAs = ESlateBrushDrawType::Image;
+					CustomSeparatorBrush.Tiling = TileType;
 					SeparatorLineBorder->SetBorderImage(&CustomSeparatorBrush);
-					SeparatorBox->SetHeightOverride(FOptionalSize()); // auto from image
+					SeparatorLineBorder->SetBorderBackgroundColor(InAppearance.LineImageColor);
 				}
+				SeparatorLineBorder->SetVisibility(EVisibility::SelfHitTestInvisible);
+
+				const float FinalH = InAppearance.LineImageHeight > 0.f ? InAppearance.LineImageHeight : NaturalH;
+				SeparatorBox->SetHeightOverride(FinalH);
+				const float FinalW = InAppearance.SeparatorWidth > 0.f ? InAppearance.SeparatorWidth : NaturalW;
+				SeparatorBox->SetWidthOverride(FinalW);
 			}
 			else
 			{
-				// Default generated line
-				SeparatorLineBorder->SetBorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"));
-				SeparatorLineBorder->SetBorderBackgroundColor(InAppearance.SeparatorLineColor);
+				// Line mode: hide border, show gradient widget
+				SeparatorLineBorder->SetVisibility(EVisibility::Collapsed);
+
+				if (SeparatorLineWidget.IsValid())
+				{
+					SeparatorLineWidget->SetColor(InAppearance.SeparatorLineColor);
+					SeparatorLineWidget->SetFadeLength(InAppearance.SeparatorFadeLength);
+					SeparatorLineWidget->SetVisibility(EVisibility::SelfHitTestInvisible);
+				}
+
 				SeparatorBox->SetHeightOverride(InAppearance.SeparatorLineThickness);
+
+				if (InAppearance.SeparatorWidth > 0.f)
+				{
+					SeparatorBox->SetWidthOverride(InAppearance.SeparatorWidth);
+				}
+				else
+				{
+					SeparatorBox->SetWidthOverride(FOptionalSize());
+				}
 			}
+
+			if (SeparatorSlot)
+			{
+				SeparatorSlot->SetPadding(InAppearance.SeparatorPadding);
+			}
+
 			SeparatorBox->SetVisibility(EVisibility::SelfHitTestInvisible);
 		}
 		else
 		{
 			SeparatorBox->SetVisibility(EVisibility::Collapsed);
 		}
+	}
+
+	// --- Speaker name & separator alignment ---
+	// Derive effective alignment: FollowSubtitle inherits the subtitle's TextAlignment.
+	ESubtitleTextAlignment EffectiveAlign = InAppearance.TextAlignment;
+	if (InAppearance.SpeakerNameAlignment != ESpeakerNameAlignment::FollowSubtitle)
+	{
+		switch (InAppearance.SpeakerNameAlignment)
+		{
+		case ESpeakerNameAlignment::Left:   EffectiveAlign = ESubtitleTextAlignment::Left;   break;
+		case ESpeakerNameAlignment::Right:  EffectiveAlign = ESubtitleTextAlignment::Right;  break;
+		default:                            EffectiveAlign = ESubtitleTextAlignment::Center; break;
+		}
+	}
+
+	// Keep the VBox slot at HAlign_Fill so the text block always spans the full content
+	// width. Alignment is expressed via text justification, matching how the subtitle
+	// text block works — this keeps the speaker name visually aligned with the subtitle
+	// without pushing it to the screen edge (which HAlign_Left/Right on the slot would do).
+	ETextJustify::Type SpeakerJustify = ETextJustify::Center;
+	switch (EffectiveAlign)
+	{
+	case ESubtitleTextAlignment::Left:  SpeakerJustify = ETextJustify::Left;  break;
+	case ESubtitleTextAlignment::Right: SpeakerJustify = ETextJustify::Right; break;
+	default:                            SpeakerJustify = ETextJustify::Center; break;
+	}
+	if (SpeakerNameTextBlock.IsValid()) { SpeakerNameTextBlock->SetJustification(SpeakerJustify); }
+
+	// Speaker name slot: always Fill so the text block spans the full width;
+	// alignment is expressed via justification (avoids "stuck to screen edge" issue).
+	if (SpeakerNameSlot) { SpeakerNameSlot->SetHorizontalAlignment(HAlign_Fill); }
+
+	// Separator slot: for a fixed-size box (image or explicit SeparatorWidth),
+	// HAlign determines where the box is placed within the row.
+	// For a full-width line (SeparatorWidth == 0, no image), always Fill.
+	if (SeparatorSlot)
+	{
+		const bool bSepHasExplicitWidth =
+			InAppearance.SeparatorWidth > 0.f || InAppearance.bUseLineImage;
+
+		EHorizontalAlignment SepHAlign = HAlign_Fill;
+		if (bSepHasExplicitWidth)
+		{
+			switch (EffectiveAlign)
+			{
+			case ESubtitleTextAlignment::Left:  SepHAlign = HAlign_Left;   break;
+			case ESubtitleTextAlignment::Right: SepHAlign = HAlign_Right;  break;
+			default:                            SepHAlign = HAlign_Center; break;
+			}
+		}
+		SeparatorSlot->SetHorizontalAlignment(SepHAlign);
 	}
 }
 
@@ -359,6 +466,48 @@ void USubtitleSubsystem::NotifySubtitleStarted(const FText& InSubtitleText, FLin
 	{
 		SubtitleTextBlock->SetText(InSubtitleText);
 	}
+
+	// Pre-measure multi-line text to prevent two problems:
+	// 1) Layout flicker: AutoWrapText causes Slate to do 2 layout passes (1-line height →
+	//    N-line height), causing a visible position shift on the first displayed frame.
+	// 2) Center/Right alignment bug: STextBlock with AutoWrapText and WrapTextAt=0 computes
+	//    justification relative to the max content width (not the border width), causing
+	//    text to appear left-aligned on the first displayed frame.
+	//    Fix for Center/Right: pre-set WidthOverride and SubtitleBorder HAlign so the
+	//    text block is correctly positioned within the border from the first frame.
+	//    Left alignment intentionally keeps HAlign_Fill (same as single-line) so that
+	//    the text appears at the left edge of the full-width content area consistently.
+	if (TypewriterSizerBox.IsValid() && SubtitleBorder.IsValid() && FSlateApplication::IsInitialized())
+	{
+		TArray<FString> Lines;
+		InSubtitleText.ToString().ParseIntoArray(Lines, TEXT("\n"), /*bCullEmpty=*/false);
+		if (Lines.Num() > 1)
+		{
+			const TSharedRef<FSlateFontMeasure> FM =
+				FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+			const float LineHeight = FM->GetMaxCharacterHeight(CurrentFontInfo, 1.0f);
+			TypewriterSizerBox->SetHeightOverride(LineHeight * static_cast<float>(Lines.Num()));
+
+			// Center and Right need WidthOverride + explicit HAlign to render correctly
+			// on the first frame. Left is fine with HAlign_Fill (same as single-line).
+			if (InAppearance.TextAlignment != ESubtitleTextAlignment::Left)
+			{
+				float MaxLineWidth = 0.f;
+				for (const FString& Line : Lines)
+				{
+					MaxLineWidth = FMath::Max(MaxLineWidth, FM->Measure(FText::FromString(Line), CurrentFontInfo).X);
+				}
+				if (MaxLineWidth > 0.f)
+				{
+					TypewriterSizerBox->SetWidthOverride(MaxLineWidth);
+					SubtitleBorder->SetHAlign(
+						InAppearance.TextAlignment == ESubtitleTextAlignment::Right
+						? HAlign_Right : HAlign_Center);
+				}
+			}
+		}
+	}
+
 	WidgetOverlay->SetVisibility(EVisibility::SelfHitTestInvisible);
 	StartAnimation(InAppearance.EntranceType, InAppearance.EntranceDuration, false);
 
@@ -371,7 +520,8 @@ void USubtitleSubsystem::ShowMessage(const FText& Text, float Duration, ESubtitl
 	// ShowMessage convenience default: larger than FSubtitleAppearance default (24)
 	Appearance.FontSize = 50;
 	Appearance.TextColor = FLinearColor::White;
-	Appearance.BackgroundColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.5f);
+	Appearance.BackgroundColor = FLinearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	Appearance.WindowOpacity   = 0.5f;
 	Appearance.VerticalPosition = ESubtitleVerticalPosition::Bottom;
 	Appearance.ScreenPadding = FMargin(40.0f, 20.0f);
 	Appearance.EntranceType = Animation;
@@ -651,12 +801,16 @@ void USubtitleSubsystem::Deinitialize()
 	ContentVerticalBox.Reset();
 	SpeakerNameTextBlock.Reset();
 	SeparatorBox.Reset();
+	SeparatorOverlay.Reset();
+	SeparatorLineWidget.Reset();
 	SeparatorLineBorder.Reset();
 	SubtitleTextBlock.Reset();
 	TypewriterSizerBox.Reset();
 	SubtitleBorder.Reset();
 	MessageWindowBox.Reset();
-	OverlaySlot = nullptr;
+	OverlaySlot      = nullptr;
+	SpeakerNameSlot  = nullptr;
+	SeparatorSlot    = nullptr;
 	bTypewriterActive    = false;
 	TypewriterFullWidth  = 0.f;
 	TypewriterFullHeight = 0.f;
@@ -749,7 +903,50 @@ void USubtitleSubsystem::ApplyAppearance(const FSubtitleAppearance& InAppearance
 
 	if (SubtitleBorder.IsValid())
 	{
-		SubtitleBorder->SetBorderBackgroundColor(InAppearance.BackgroundColor);
+		// Apply window background: Square / Rounded / Image
+		FLinearColor BgColor = InAppearance.BackgroundColor;
+		BgColor.A *= InAppearance.WindowOpacity;
+
+		switch (InAppearance.WindowStyle)
+		{
+		case EMessageWindowStyle::Rounded:
+		{
+			WindowBrush = FSlateBrush();
+			WindowBrush.DrawAs       = ESlateBrushDrawType::RoundedBox;
+			WindowBrush.OutlineSettings.CornerRadii = FVector4(
+				InAppearance.WindowCornerRadius,
+				InAppearance.WindowCornerRadius,
+				InAppearance.WindowCornerRadius,
+				InAppearance.WindowCornerRadius);
+			WindowBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+			WindowBrush.TintColor = FSlateColor(BgColor);
+			SubtitleBorder->SetBorderImage(&WindowBrush);
+			SubtitleBorder->SetBorderBackgroundColor(FLinearColor::White);
+			break;
+		}
+		case EMessageWindowStyle::Image:
+		{
+			UTexture2D* Tex = InAppearance.WindowImage.LoadSynchronous();
+			if (Tex)
+			{
+				WindowBrush = FSlateBrush();
+				WindowBrush.SetResourceObject(Tex);
+				WindowBrush.ImageSize = FVector2D(Tex->GetSizeX(), Tex->GetSizeY());
+				WindowBrush.DrawAs    = ESlateBrushDrawType::Image;
+				SubtitleBorder->SetBorderImage(&WindowBrush);
+			}
+			else
+			{
+				SubtitleBorder->SetBorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"));
+			}
+			SubtitleBorder->SetBorderBackgroundColor(FLinearColor(1.f, 1.f, 1.f, InAppearance.WindowOpacity));
+			break;
+		}
+		default: // Square
+			SubtitleBorder->SetBorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"));
+			SubtitleBorder->SetBorderBackgroundColor(BgColor);
+			break;
+		}
 	}
 
 	if (MessageWindowBox.IsValid())
