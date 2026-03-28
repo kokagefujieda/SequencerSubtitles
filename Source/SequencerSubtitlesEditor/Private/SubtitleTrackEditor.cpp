@@ -131,7 +131,7 @@ FReply FSubtitleSectionUI::OnSectionDoubleClicked(const FGeometry& SectionGeomet
 					.OnTextCommitted(FOnTextCommitted::CreateLambda(
 						[WeakSubtitleSection](const FText& InText, ETextCommit::Type CommitType)
 						{
-							if (CommitType == ETextCommit::OnEnter || CommitType == ETextCommit::OnUserMovedFocus)
+							if (CommitType == ETextCommit::OnEnter)
 							{
 								if (UMovieSceneSeqSubtitleSection* Section = WeakSubtitleSection.Get())
 								{
@@ -176,6 +176,61 @@ FReply FSubtitleSectionUI::OnSectionDoubleClicked(const FGeometry& SectionGeomet
 	}
 
 	return FReply::Handled();
+}
+
+void FSubtitleSectionUI::BuildSectionContextMenu(FMenuBuilder& MenuBuilder, const FGuid& ObjectBinding)
+{
+	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> WeakSubSection =
+		Cast<UMovieSceneSeqSubtitleSection>(GetSectionObject());
+	if (!WeakSubSection.IsValid())
+	{
+		return;
+	}
+
+	MenuBuilder.BeginSection(TEXT("SubtitleSectionDefaults"), LOCTEXT("SectionDefaultsMenu", "Section"));
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ResetSectionToDefault", "Reset to Default"),
+			LOCTEXT("ResetSectionToDefaultTooltip", "Reset section properties to saved defaults (subtitle text is kept)"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([WeakSubSection]()
+			{
+				UMovieSceneSeqSubtitleSection* Section = WeakSubSection.Get();
+				if (!Section) return;
+				const USubtitleSettings* Settings = GetDefault<USubtitleSettings>();
+				if (!Settings) return;
+				const FScopedTransaction Transaction(LOCTEXT("ResetToDefault_Transaction", "Reset Section to Default"));
+				Section->Modify();
+				Section->bTypewriterEffect      = Settings->bDefaultTypewriterEffect;
+				Section->TypewriterCharInterval = Settings->DefaultTypewriterCharInterval;
+				Section->bOverrideSpeakerName   = Settings->bDefaultOverrideSpeakerName;
+				Section->SpeakerNameOverride    = Settings->DefaultSpeakerNameOverride;
+				Section->bOverrideAppearance    = Settings->bDefaultOverrideAppearance;
+				Section->AppearanceOverride     = Settings->DefaultAppearanceOverride;
+			}))
+		);
+
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("SetSectionAsDefault", "Set as Default"),
+			LOCTEXT("SetSectionAsDefaultTooltip", "Save current section properties as defaults for new sections"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([WeakSubSection]()
+			{
+				const UMovieSceneSeqSubtitleSection* Section = WeakSubSection.Get();
+				if (!Section) return;
+				USubtitleSettings* Settings = GetMutableDefault<USubtitleSettings>();
+				if (!Settings) return;
+				Settings->bDefaultTypewriterEffect      = Section->bTypewriterEffect;
+				Settings->DefaultTypewriterCharInterval = Section->TypewriterCharInterval;
+				Settings->bDefaultOverrideSpeakerName   = Section->bOverrideSpeakerName;
+				Settings->DefaultSpeakerNameOverride    = Section->SpeakerNameOverride;
+				Settings->bDefaultOverrideAppearance    = Section->bOverrideAppearance;
+				Settings->DefaultAppearanceOverride     = Section->AppearanceOverride;
+				Settings->SaveConfig();
+			}))
+		);
+	}
+	MenuBuilder.EndSection();
 }
 
 // --- FSubtitleTrackEditor ---
@@ -447,6 +502,11 @@ void FSubtitleTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
 	const float DefaultDuration = Settings ? Settings->DefaultSectionDuration : 3.0f;
 	const float MaxDuration = Settings ? Settings->MaxDefaultSectionDuration : 5.0f;
 
+	// Get clipboard text for paste-on-add feature
+	FString ClipboardText;
+	FPlatformApplicationMisc::ClipboardPaste(ClipboardText);
+	const FString TrimmedClipboard = ClipboardText.TrimStartAndEnd();
+
 	// Find the nearest section that starts after CurrentTime on this track
 	FFrameNumber NearestNextStart = TNumericLimits<int32>::Max();
 	for (UMovieSceneSection* Section : Track->GetAllSections())
@@ -466,21 +526,54 @@ void FSubtitleTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
 	{
 		const FFrameNumber GapDuration = NearestNextStart - CurrentTime;
 		const FFrameNumber MaxFrames = (static_cast<double>(MaxDuration) * TickResolution).FloorToFrame();
-		Duration = FMath::Min(GapDuration, MaxFrames);
+		if (!TrimmedClipboard.IsEmpty())
+		{
+			const float CharsPerSec = Settings ? Settings->ClipboardPasteCharsPerSecond : 10.0f;
+			const float TextDuration = FMath::Max(static_cast<float>(TrimmedClipboard.Len()) / CharsPerSec, 0.5f);
+			const FFrameNumber TextFrames = (static_cast<double>(TextDuration) * TickResolution).FloorToFrame();
+			Duration = FMath::Min(GapDuration, TextFrames);
+		}
+		else
+		{
+			Duration = FMath::Min(GapDuration, MaxFrames);
+		}
 	}
 	else
 	{
-		Duration = (static_cast<double>(DefaultDuration) * TickResolution).FloorToFrame();
+		if (!TrimmedClipboard.IsEmpty())
+		{
+			const float CharsPerSec = Settings ? Settings->ClipboardPasteCharsPerSecond : 10.0f;
+			const float TextDuration = FMath::Max(static_cast<float>(TrimmedClipboard.Len()) / CharsPerSec, 0.5f);
+			Duration = (static_cast<double>(TextDuration) * TickResolution).FloorToFrame();
+		}
+		else
+		{
+			Duration = (static_cast<double>(DefaultDuration) * TickResolution).FloorToFrame();
+		}
 	}
 
 	NewSection->SetRange(TRange<FFrameNumber>(CurrentTime, CurrentTime + Duration));
 
-	// Inherit TrackColor as the section's BarColor
+	// Inherit TrackColor as the section's BarColor; apply saved defaults; paste clipboard text if available
 	if (UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(NewSection))
 	{
 		if (const UMovieSceneSubtitleTrack* SubTrack = Cast<UMovieSceneSubtitleTrack>(Track))
 		{
 			SubSection->BarColor = SubTrack->TrackColor;
+		}
+		// Apply saved section defaults
+		if (Settings)
+		{
+			SubSection->bTypewriterEffect      = Settings->bDefaultTypewriterEffect;
+			SubSection->TypewriterCharInterval = Settings->DefaultTypewriterCharInterval;
+			SubSection->bOverrideSpeakerName   = Settings->bDefaultOverrideSpeakerName;
+			SubSection->SpeakerNameOverride    = Settings->DefaultSpeakerNameOverride;
+			SubSection->bOverrideAppearance    = Settings->bDefaultOverrideAppearance;
+			SubSection->AppearanceOverride     = Settings->DefaultAppearanceOverride;
+		}
+		if (!TrimmedClipboard.IsEmpty())
+		{
+			SubSection->SubtitleText = FText::FromString(TrimmedClipboard);
 		}
 	}
 

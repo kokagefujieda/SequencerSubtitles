@@ -24,6 +24,7 @@ public:
 	virtual float GetSectionHeight() const override;
 #endif
 	virtual FReply OnSectionDoubleClicked(const FGeometry& SectionGeometry, const FPointerEvent& MouseEvent) override;
+	virtual void BuildSectionContextMenu(FMenuBuilder& MenuBuilder, const FGuid& ObjectBinding) override;
 };
 
 /** Track editor: menu registration + section creation. */

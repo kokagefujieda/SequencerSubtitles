@@ -16,6 +16,10 @@ class SEQUENCERSUBTITLES_API UMovieSceneSeqSubtitleSection : public UMovieSceneS
 public:
 	UMovieSceneSeqSubtitleSection();
 
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	/** Override the track-level speaker name for this section only. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle")
 	bool bOverrideSpeakerName = false;

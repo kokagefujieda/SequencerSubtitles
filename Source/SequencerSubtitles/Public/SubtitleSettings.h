@@ -311,4 +311,33 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Editor",
 		meta = (ClampMin = "0.5", ClampMax = "60.0", UIMin = "1.0", UIMax = "15.0"))
 	float MaxDefaultSectionDuration = 5.0f;
+
+	/** Characters per second used to auto-size a new section when pasting from clipboard.
+	 *  Duration = ClipboardTextLength / CharsPerSecond (clamped to gap when applicable). */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor",
+		meta = (ClampMin = "1.0", ClampMax = "30.0", UIMin = "2.0", UIMax = "20.0"))
+	float ClipboardPasteCharsPerSecond = 10.0f;
+
+	// --- Section Creation Defaults (set via "Set as Default" on any section) ---
+
+	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults")
+	bool bDefaultTypewriterEffect = false;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults",
+		meta = (EditCondition = "bDefaultTypewriterEffect", ClampMin = "0.01", UIMin = "0.01"))
+	float DefaultTypewriterCharInterval = 0.1f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults")
+	bool bDefaultOverrideSpeakerName = false;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults",
+		meta = (EditCondition = "bDefaultOverrideSpeakerName"))
+	FText DefaultSpeakerNameOverride;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults")
+	bool bDefaultOverrideAppearance = false;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults",
+		meta = (EditCondition = "bDefaultOverrideAppearance", ShowOnlyInnerProperties))
+	FSubtitleAppearance DefaultAppearanceOverride;
 };
