@@ -958,11 +958,16 @@ void USubtitleSubsystem::ApplyAppearanceToSlot(FSubtitleSlot& Slot, const FSubti
 {
 	ApplyOverlayPosition(InAppearance);
 
-	// Per-slot screen offset
+	// Per-slot screen offset — applied to AnimWrapper so it doesn't interfere with animation transforms
 #if WITH_EDITOR
 	if (Slot.DragHandle.IsValid())
 	{
 		Slot.DragHandle->SetCurrentOffset(InAppearance.ScreenOffset);
+	}
+	// In editor, DragHandle applies the offset to its child (EntryVBox) via OnMouseMove.
+	// When not dragging we set it explicitly so the stored offset is reflected immediately.
+	if (Slot.EntryVBox.IsValid())
+	{
 		Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(InAppearance.ScreenOffset));
 	}
 #else
@@ -1199,6 +1204,8 @@ void USubtitleSubsystem::StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID,
 
 	Slot.SubtitleBorder->SetRenderOpacity(1.0f);
 	Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform());
+	if (Slot.SpeakerTextBlock.IsValid()) { Slot.SpeakerTextBlock->SetRenderOpacity(1.0f); Slot.SpeakerTextBlock->SetRenderTransform(FSlateRenderTransform()); }
+	if (Slot.SeparatorBox.IsValid())     { Slot.SeparatorBox->SetRenderOpacity(1.0f);     Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
 
 	if (InType == ESubtitleEntranceType::None || InDuration <= 0.0f)
 	{
@@ -1273,30 +1280,55 @@ void USubtitleSubsystem::ApplySlotAnimationAlpha(FSubtitleSlot& Slot, float Ease
 {
 	if (!Slot.SubtitleBorder.IsValid()) { return; }
 
+	// Apply opacity to every visible component simultaneously
+	auto SetOpacityAll = [&](float O)
+	{
+		Slot.SubtitleBorder->SetRenderOpacity(O);
+		if (Slot.SpeakerTextBlock.IsValid()) Slot.SpeakerTextBlock->SetRenderOpacity(O);
+		if (Slot.SeparatorBox.IsValid())     Slot.SeparatorBox->SetRenderOpacity(O);
+	};
+
+	// Apply the same render transform to every visible component
+	auto SetTransformAll = [&](const FSlateRenderTransform& T)
+	{
+		Slot.SubtitleBorder->SetRenderTransform(T);
+		if (Slot.SpeakerTextBlock.IsValid()) Slot.SpeakerTextBlock->SetRenderTransform(T);
+		if (Slot.SeparatorBox.IsValid())     Slot.SeparatorBox->SetRenderTransform(T);
+	};
+
+	// For scale effects, apply via EntryVBox so the whole group scales from one pivot.
+	// EntryVBox RenderTransform = Scale(pivot=center) combined with ScreenOffset translation.
+	auto SetScaleAll = [&](const FScale2D& Scale)
+	{
+		if (Slot.EntryVBox.IsValid())
+		{
+			Slot.EntryVBox->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+			Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(Scale, Slot.Appearance.ScreenOffset));
+		}
+	};
+
 	switch (Slot.AnimType)
 	{
 	case ESubtitleEntranceType::FadeIn:
-		Slot.SubtitleBorder->SetRenderOpacity(EasedAlpha);
+		SetOpacityAll(EasedAlpha);
 		break;
 	case ESubtitleEntranceType::SlideLeft:
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform(FVector2D(-Slot.SlideOffsetX * (1.f - EasedAlpha), 0.0)));
+		SetTransformAll(FSlateRenderTransform(FVector2D(-Slot.SlideOffsetX * (1.f - EasedAlpha), 0.f)));
 		break;
 	case ESubtitleEntranceType::SlideRight:
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform(FVector2D(Slot.SlideOffsetX * (1.f - EasedAlpha), 0.0)));
+		SetTransformAll(FSlateRenderTransform(FVector2D(Slot.SlideOffsetX * (1.f - EasedAlpha), 0.f)));
 		break;
 	case ESubtitleEntranceType::SlideTop:
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform(FVector2D(0.0, -Slot.SlideOffsetY * (1.f - EasedAlpha))));
+		SetTransformAll(FSlateRenderTransform(FVector2D(0.f, -Slot.SlideOffsetY * (1.f - EasedAlpha))));
 		break;
 	case ESubtitleEntranceType::SlideBottom:
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform(FVector2D(0.0, Slot.SlideOffsetY * (1.f - EasedAlpha))));
+		SetTransformAll(FSlateRenderTransform(FVector2D(0.f, Slot.SlideOffsetY * (1.f - EasedAlpha))));
 		break;
 	case ESubtitleEntranceType::ScaleVertical:
-		Slot.SubtitleBorder->SetRenderTransformPivot(FVector2D(0.5, 0.5));
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform(FScale2D(1.0f, EasedAlpha)));
+		SetScaleAll(FScale2D(1.0f, EasedAlpha));
 		break;
 	case ESubtitleEntranceType::ScaleUp:
-		Slot.SubtitleBorder->SetRenderTransformPivot(FVector2D(0.5, 0.5));
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform(FScale2D(EasedAlpha, EasedAlpha)));
+		SetScaleAll(FScale2D(EasedAlpha, EasedAlpha));
 		break;
 	default:
 		break;
@@ -1320,10 +1352,7 @@ EActiveTimerReturnType USubtitleSubsystem::TickSlotAnimation(uint32 SlotID, doub
 	const float DirectionalAlpha = Slot.bExitAnim ? (1.0f - Alpha) : Alpha;
 
 	float EasedAlpha;
-	if (Slot.bExitAnim)
-		EasedAlpha = FMath::InterpEaseIn(0.0f, 1.0f, DirectionalAlpha, 2.0f);
-	else
-		EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, DirectionalAlpha, 2.0f);
+	EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, DirectionalAlpha, 2.0f);
 
 	ApplySlotAnimationAlpha(Slot, EasedAlpha);
 
@@ -1339,6 +1368,9 @@ EActiveTimerReturnType USubtitleSubsystem::TickSlotAnimation(uint32 SlotID, doub
 		Slot.bAnimating = false;
 		Slot.SubtitleBorder->SetRenderOpacity(1.0f);
 		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform());
+		if (Slot.SpeakerTextBlock.IsValid()) { Slot.SpeakerTextBlock->SetRenderOpacity(1.0f); Slot.SpeakerTextBlock->SetRenderTransform(FSlateRenderTransform()); }
+		if (Slot.SeparatorBox.IsValid())     { Slot.SeparatorBox->SetRenderOpacity(1.0f);     Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
+		if (Slot.EntryVBox.IsValid())        { Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(Slot.Appearance.ScreenOffset)); }
 		return EActiveTimerReturnType::Stop;
 	}
 
