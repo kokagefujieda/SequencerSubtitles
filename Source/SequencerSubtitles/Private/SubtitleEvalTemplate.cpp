@@ -20,17 +20,19 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 	FSubtitleAppearance Appearance;
 	/** -1 = show full text; >= 0 = typewriter: show this many characters. */
 	int32         VisibleCharCount = -1;
+	uint32        SlotID           = 0;
 #if WITH_EDITOR
 	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> SourceSection;
 #endif
 
 	FSubtitleExecutionToken(const FText& InSpeakerName, const FText& InText, FLinearColor InColor,
-		const FSubtitleAppearance& InAppearance, int32 InVisibleCharCount)
+		const FSubtitleAppearance& InAppearance, int32 InVisibleCharCount, uint32 InSlotID)
 		: SpeakerName(InSpeakerName)
 		, SubtitleText(InText)
 		, Color(InColor)
 		, Appearance(InAppearance)
 		, VisibleCharCount(InVisibleCharCount)
+		, SlotID(InSlotID)
 	{
 	}
 
@@ -46,27 +48,26 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 		if (!Subsystem) { return; }
 
 #if WITH_EDITOR
-		Subsystem->SetActiveSection(SourceSection.Get());
+		Subsystem->SetActiveSection(SlotID, SourceSection.Get());
 #endif
 
-		// Already showing this subtitle
-		if (Subsystem->bIsSubtitleActive && Subsystem->CurrentSubtitleText.EqualTo(SubtitleText))
+		// Already showing this slot — just update typewriter progress if needed
+		if (Subsystem->IsSlotActive(SlotID))
 		{
-			// For typewriter: update visible character count every frame
 			if (VisibleCharCount >= 0)
 			{
-				Subsystem->UpdateTypewriterProgress(VisibleCharCount);
+				Subsystem->UpdateTypewriterProgress(SlotID, VisibleCharCount);
 			}
 			return;
 		}
 
 		// New subtitle — start it
-		Subsystem->NotifySubtitleStarted(SubtitleText, Color, Appearance, SpeakerName);
+		Subsystem->NotifySubtitleStarted(SlotID, SubtitleText, Color, Appearance, SpeakerName);
 
 		// For typewriter: override initial display immediately (before Slate renders)
 		if (VisibleCharCount >= 0)
 		{
-			Subsystem->UpdateTypewriterProgress(VisibleCharCount);
+			Subsystem->UpdateTypewriterProgress(SlotID, VisibleCharCount);
 		}
 	}
 };
@@ -160,6 +161,8 @@ FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection
 			TypewriterTickResolution = MovieScene->GetTickResolution();
 		}
 	}
+
+	SlotID = InSection.GetUniqueID();
 }
 
 void FSubtitleEvalTemplate::SetupOverrides()
@@ -178,10 +181,7 @@ void FSubtitleEvalTemplate::TearDown(FPersistentEvaluationData& PersistentData, 
 	USubtitleSubsystem* Subsystem = World->GetSubsystem<USubtitleSubsystem>();
 	if (!Subsystem) { return; }
 
-	if (Subsystem->bIsSubtitleActive && Subsystem->CurrentSubtitleText.EqualTo(SubtitleText))
-	{
-		Subsystem->NotifySubtitleEnded();
-	}
+	Subsystem->NotifySubtitleEnded(SlotID);
 }
 
 void FSubtitleEvalTemplate::Evaluate(
@@ -218,7 +218,7 @@ void FSubtitleEvalTemplate::Evaluate(
 		}
 	}
 
-	FSubtitleExecutionToken Token(SpeakerName, SubtitleText, BarColor, Appearance, VisibleCharCount);
+	FSubtitleExecutionToken Token(SpeakerName, SubtitleText, BarColor, Appearance, VisibleCharCount, SlotID);
 #if WITH_EDITOR
 	Token.SourceSection = SourceSection;
 #endif

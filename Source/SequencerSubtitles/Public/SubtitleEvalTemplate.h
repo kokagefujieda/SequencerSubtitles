@@ -43,6 +43,10 @@ struct SEQUENCERSUBTITLES_API FSubtitleEvalTemplate : public FMovieSceneEvalTemp
 	UPROPERTY()
 	FFrameRate TypewriterTickResolution = FFrameRate(24000, 1);
 
+	/** Unique ID of the source section — used as slot key for multi-subtitle support. */
+	UPROPERTY()
+	uint32 SlotID = 0;
+
 #if WITH_EDITOR
 	/** Transient pointer to source section for drag-based position editing. */
 	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> SourceSection;
