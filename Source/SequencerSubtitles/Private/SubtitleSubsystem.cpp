@@ -69,10 +69,31 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 
 void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
 {
-	// Speaker name
+	// Speaker name — outline layers (back-to-front: outer blur → outer outline → inner blur → inner outline → text)
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+	{
+		Slot.SpeakerOuterBlurTextBlocks[i] = SNew(STextBlock).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+	}
+	Slot.SpeakerOuterOutlineTextBlock = SNew(STextBlock).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+	{
+		Slot.SpeakerInnerBlurTextBlocks[i] = SNew(STextBlock).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+	}
+	Slot.SpeakerInnerOutlineTextBlock = SNew(STextBlock).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+
 	Slot.SpeakerTextBlock = SNew(STextBlock)
 		.Justification(ETextJustify::Center)
 		.Visibility(EVisibility::Collapsed);
+
+	// Build SOverlay: outer blur[N-1..0] → outer outline → inner blur[N-1..0] → inner outline → text
+	Slot.SpeakerTextOverlay = SNew(SOverlay);
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+		Slot.SpeakerTextOverlay->AddSlot()[ Slot.SpeakerOuterBlurTextBlocks[i].ToSharedRef() ];
+	Slot.SpeakerTextOverlay->AddSlot()[ Slot.SpeakerOuterOutlineTextBlock.ToSharedRef() ];
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+		Slot.SpeakerTextOverlay->AddSlot()[ Slot.SpeakerInnerBlurTextBlocks[i].ToSharedRef() ];
+	Slot.SpeakerTextOverlay->AddSlot()[ Slot.SpeakerInnerOutlineTextBlock.ToSharedRef() ];
+	Slot.SpeakerTextOverlay->AddSlot()[ Slot.SpeakerTextBlock.ToSharedRef() ];
 
 	// Separator
 	Slot.SeparatorLineWidget = SNew(SSubtitleSeparatorLine);
@@ -94,14 +115,35 @@ void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
 			Slot.SeparatorOverlay.ToSharedRef()
 		];
 
-	// Subtitle text
+	// Subtitle text — outline layers (back-to-front)
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+	{
+		Slot.OuterBlurTextBlocks[i] = SNew(STextBlock).AutoWrapText(true).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+	}
+	Slot.OuterOutlineTextBlock = SNew(STextBlock).AutoWrapText(true).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+	{
+		Slot.InnerBlurTextBlocks[i] = SNew(STextBlock).AutoWrapText(true).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+	}
+	Slot.InnerOutlineTextBlock = SNew(STextBlock).AutoWrapText(true).Justification(ETextJustify::Center).Visibility(EVisibility::Collapsed);
+
 	Slot.SubtitleTextBlock = SNew(STextBlock)
 		.AutoWrapText(true)
 		.Justification(ETextJustify::Center);
 
+	// Build SOverlay
+	Slot.SubtitleTextOverlay = SNew(SOverlay);
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+		Slot.SubtitleTextOverlay->AddSlot()[ Slot.OuterBlurTextBlocks[i].ToSharedRef() ];
+	Slot.SubtitleTextOverlay->AddSlot()[ Slot.OuterOutlineTextBlock.ToSharedRef() ];
+	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
+		Slot.SubtitleTextOverlay->AddSlot()[ Slot.InnerBlurTextBlocks[i].ToSharedRef() ];
+	Slot.SubtitleTextOverlay->AddSlot()[ Slot.InnerOutlineTextBlock.ToSharedRef() ];
+	Slot.SubtitleTextOverlay->AddSlot()[ Slot.SubtitleTextBlock.ToSharedRef() ];
+
 	Slot.TypewriterSizerBox = SNew(SBox)
 		[
-			Slot.SubtitleTextBlock.ToSharedRef()
+			Slot.SubtitleTextOverlay.ToSharedRef()
 		];
 
 	Slot.SubtitleBorder = SNew(SBorder)
@@ -126,7 +168,7 @@ void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
 		.Padding(0, 0, 0, 2)
 		.Expose(Slot.SpeakerNameSlot)
 		[
-			Slot.SpeakerTextBlock.ToSharedRef()
+			Slot.SpeakerTextOverlay.ToSharedRef()
 		]
 		+ SVerticalBox::Slot()
 		.AutoHeight()
@@ -194,6 +236,7 @@ void USubtitleSubsystem::RemoveSlotWidget(uint32 SlotID)
 		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AutoHideTimerHandle.ToSharedRef());
 		Slot.AutoHideTimerHandle.Reset();
 	}
+	StopTremble(Slot);
 
 	// Remove widget from the stack
 	if (ContentVerticalBox.IsValid())
@@ -419,11 +462,20 @@ void USubtitleSubsystem::NotifySubtitleStarted(uint32 SlotID, const FText& InSub
 	{
 		Slot.SubtitleTextBlock->SetText(InSubtitleText);
 	}
+	// Sync text to outline layers
+	if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetText(InSubtitleText);
+	if (Slot.OuterOutlineTextBlock.IsValid()) Slot.OuterOutlineTextBlock->SetText(InSubtitleText);
+	for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+	{
+		if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetText(InSubtitleText);
+		if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetText(InSubtitleText);
+	}
 
 	PreMeasureSlotText(Slot, InSubtitleText, InAppearance);
 
 	WidgetOverlay->SetVisibility(EVisibility::SelfHitTestInvisible);
 	StartSlotAnimation(Slot, SlotID, InAppearance.EntranceType, InAppearance.EntranceDuration, false);
+	StartTremble(Slot, SlotID);
 
 	OnSubtitleStarted.Broadcast(InSubtitleText, InBarColor, InSpeakerName);
 }
@@ -517,7 +569,20 @@ void USubtitleSubsystem::UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCh
 
 	PlayTypewriterSoundForSlot(Slot, SlotID, ShowChars);
 
-	Slot.SubtitleTextBlock->SetText(FText::FromString(PageText.Left(ClampedLocal)));
+	const FText TypewriterText = FText::FromString(PageText.Left(ClampedLocal));
+	Slot.SubtitleTextBlock->SetText(TypewriterText);
+	// Sync text to outline layers
+	auto SetTextIfVisible = [&TypewriterText](const TSharedPtr<STextBlock>& TB)
+	{
+		if (TB.IsValid() && TB->GetVisibility() != EVisibility::Collapsed) TB->SetText(TypewriterText);
+	};
+	SetTextIfVisible(Slot.InnerOutlineTextBlock);
+	SetTextIfVisible(Slot.OuterOutlineTextBlock);
+	for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+	{
+		SetTextIfVisible(Slot.InnerBlurTextBlocks[i]);
+		SetTextIfVisible(Slot.OuterBlurTextBlocks[i]);
+	}
 
 	if (ShowChars >= TotalChars)
 	{
@@ -529,6 +594,22 @@ void USubtitleSubsystem::UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCh
 void USubtitleSubsystem::UpdateTypewriterProgress(int32 VisibleCharCount)
 {
 	UpdateTypewriterProgress(0, VisibleCharCount);
+}
+
+// ---------------------------------------------------------------------------
+// GetMaxOutlinePixels — file-scope helper for outline-aware text measurement
+// ---------------------------------------------------------------------------
+
+static int32 GetMaxOutlinePixels(const FSubtitleAppearance& InAppearance)
+{
+	if (!InAppearance.bEnableOutline1) { return 0; }
+	int32 Max = InAppearance.OutlineSize1 + FMath::CeilToInt(InAppearance.OutlineBlur1);
+	if (InAppearance.bEnableOutline2)
+	{
+		const int32 Outer = InAppearance.OutlineSize1 + InAppearance.OutlineSize2 + FMath::CeilToInt(InAppearance.OutlineBlur2);
+		Max = FMath::Max(Max, Outer);
+	}
+	return Max;
 }
 
 // ---------------------------------------------------------------------------
@@ -577,22 +658,25 @@ void USubtitleSubsystem::InitTypewriterState(FSubtitleSlot& Slot, uint32 SlotID,
 		Slot.TypewriterPageCharStarts.Add(0);
 	}
 
-	// Measure full width for SBox anchoring
+	// Measure full width for SBox anchoring (include outline extent for accuracy)
 	if (FSlateApplication::IsInitialized())
 	{
 		const TSharedRef<FSlateFontMeasure> FM =
 			FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
+		FSlateFontInfo MeasureFont = Slot.FontInfo;
+		MeasureFont.OutlineSettings.OutlineSize = GetMaxOutlinePixels(Slot.Appearance);
+
 		for (const FString& Line : AllLines)
 		{
-			const float LineWidth = FM->Measure(FText::FromString(Line), Slot.FontInfo).X;
+			const float LineWidth = FM->Measure(FText::FromString(Line), MeasureFont).X;
 			Slot.TypewriterFullWidth = FMath::Max(Slot.TypewriterFullWidth, LineWidth);
 		}
 
 		const int32 DisplayLineCount = (MaxLines > 0)
 			? FMath::Min(MaxLines, AllLines.Num())
 			: AllLines.Num();
-		const float LineHeight    = FM->GetMaxCharacterHeight(Slot.FontInfo, 1.0f);
+		const float LineHeight    = FM->GetMaxCharacterHeight(MeasureFont, 1.0f);
 		Slot.TypewriterFullHeight = LineHeight * static_cast<float>(DisplayLineCount);
 	}
 
@@ -607,6 +691,13 @@ void USubtitleSubsystem::InitTypewriterState(FSubtitleSlot& Slot, uint32 SlotID,
 	}
 
 	Slot.SubtitleTextBlock->SetJustification(ETextJustify::Left);
+	if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetJustification(ETextJustify::Left);
+	if (Slot.OuterOutlineTextBlock.IsValid()) Slot.OuterOutlineTextBlock->SetJustification(ETextJustify::Left);
+	for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+	{
+		if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetJustification(ETextJustify::Left);
+		if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetJustification(ETextJustify::Left);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -896,7 +987,153 @@ namespace
 		}
 	}
 
-	/** Apply font, size, color and justification to a slot's SubtitleTextBlock. */
+	/**
+	 * Configure N blur layers for one outline using a Gaussian-like alpha curve.
+	 * Layers are spread evenly from BlurRadius/N to BlurRadius, with alpha decaying
+	 * as exp(-k * (i/N)^2) for a smooth soft-glow gradient.
+	 */
+	static void ConfigureBlurLayers(
+		TSharedPtr<STextBlock>* BlurArray,
+		int32 NumSteps,
+		const FSlateFontInfo& BaseFontInfo,
+		int32 BaseOutlineSize,
+		float BlurRadius,
+		const FLinearColor& OutlineColor,
+		const FSlateColor& FillColor)
+	{
+		if (BlurRadius <= 0.f) { return; }
+
+		// Gaussian decay constant — k=3.0 gives a natural falloff from ~0.72 to ~0.05
+		constexpr float GaussK = 3.0f;
+
+		for (int32 i = 0; i < NumSteps; ++i)
+		{
+			if (!BlurArray[i].IsValid()) { continue; }
+
+			// t ranges from 1/N (innermost, smallest blur) to 1.0 (outermost, full blur)
+			const float t = static_cast<float>(i + 1) / static_cast<float>(NumSteps);
+			const int32 StepSize = FMath::CeilToInt(BlurRadius * t);
+			const float StepAlpha = FMath::Exp(-GaussK * t * t);
+
+			FSlateFontInfo Font = BaseFontInfo;
+			Font.OutlineSettings.OutlineSize = BaseOutlineSize + StepSize;
+			FLinearColor C = OutlineColor;
+			C.A *= StepAlpha;
+			Font.OutlineSettings.OutlineColor = C;
+			Font.OutlineSettings.bSeparateFillAlpha = true;
+			BlurArray[i]->SetFont(Font);
+			BlurArray[i]->SetColorAndOpacity(FillColor);
+			BlurArray[i]->SetVisibility(EVisibility::SelfHitTestInvisible);
+		}
+	}
+
+	/**
+	 * Configure outline layers for a set of text blocks.
+	 * Supports: no outline, single outline (applied directly to main), and dual outline (layered).
+	 * Each outline can have an N-step Gaussian blur gradient for a smooth soft glow effect.
+	 */
+	static void ConfigureOutlineLayers(
+		TSharedPtr<STextBlock> MainTextBlock,
+		TSharedPtr<STextBlock> InnerOutline,
+		TSharedPtr<STextBlock>* InnerBlurArray,
+		TSharedPtr<STextBlock> OuterOutline,
+		TSharedPtr<STextBlock>* OuterBlurArray,
+		int32 NumBlurSteps,
+		const FSlateFontInfo& BaseFontInfo,
+		const FSubtitleAppearance& Appearance,
+		const FSlateColor& TextColor)
+	{
+		// Default: all outline layers collapsed
+		auto CollapseIfValid = [](const TSharedPtr<STextBlock>& TB)
+		{
+			if (TB.IsValid()) TB->SetVisibility(EVisibility::Collapsed);
+		};
+		CollapseIfValid(InnerOutline);
+		CollapseIfValid(OuterOutline);
+		for (int32 i = 0; i < NumBlurSteps; ++i)
+		{
+			CollapseIfValid(InnerBlurArray[i]);
+			CollapseIfValid(OuterBlurArray[i]);
+		}
+
+		if (!Appearance.bEnableOutline1)
+		{
+			// No outlines — main text uses base font as-is
+			if (MainTextBlock.IsValid())
+			{
+				FSlateFontInfo Font = BaseFontInfo;
+				Font.OutlineSettings.OutlineSize = 0;
+				MainTextBlock->SetFont(Font);
+				MainTextBlock->SetColorAndOpacity(TextColor);
+			}
+			return;
+		}
+
+		const bool bHasOutline2 = Appearance.bEnableOutline2;
+
+		if (!bHasOutline2)
+		{
+			// Single outline only — apply directly to MainTextBlock
+			FSlateFontInfo Font = BaseFontInfo;
+			Font.OutlineSettings.OutlineSize = Appearance.OutlineSize1;
+			Font.OutlineSettings.OutlineColor = Appearance.OutlineColor1;
+			Font.OutlineSettings.bSeparateFillAlpha = false;
+			MainTextBlock->SetFont(Font);
+			MainTextBlock->SetColorAndOpacity(TextColor);
+
+			// Blur for single outline (N-step Gaussian)
+			ConfigureBlurLayers(InnerBlurArray, NumBlurSteps, BaseFontInfo,
+				Appearance.OutlineSize1, Appearance.OutlineBlur1,
+				Appearance.OutlineColor1, FSlateColor(FLinearColor::Transparent));
+			return;
+		}
+
+		// --- Dual outline mode ---
+
+		// Front layer (MainTextBlock): text only, no outline
+		{
+			FSlateFontInfo Font = BaseFontInfo;
+			Font.OutlineSettings.OutlineSize = 0;
+			MainTextBlock->SetFont(Font);
+			MainTextBlock->SetColorAndOpacity(TextColor);
+		}
+
+		// Inner outline layer
+		if (InnerOutline.IsValid())
+		{
+			FSlateFontInfo Font = BaseFontInfo;
+			Font.OutlineSettings.OutlineSize = Appearance.OutlineSize1;
+			Font.OutlineSettings.OutlineColor = Appearance.OutlineColor1;
+			Font.OutlineSettings.bSeparateFillAlpha = true;
+			InnerOutline->SetFont(Font);
+			InnerOutline->SetColorAndOpacity(FSlateColor(FLinearColor::Transparent));
+			InnerOutline->SetVisibility(EVisibility::SelfHitTestInvisible);
+		}
+
+		// Inner blur (N-step Gaussian)
+		ConfigureBlurLayers(InnerBlurArray, NumBlurSteps, BaseFontInfo,
+			Appearance.OutlineSize1, Appearance.OutlineBlur1,
+			Appearance.OutlineColor1, FSlateColor(FLinearColor::Transparent));
+
+		// Outer outline layer: size = outline1 + outline2, fill = OutlineColor1
+		if (OuterOutline.IsValid())
+		{
+			FSlateFontInfo Font = BaseFontInfo;
+			Font.OutlineSettings.OutlineSize = Appearance.OutlineSize1 + Appearance.OutlineSize2;
+			Font.OutlineSettings.OutlineColor = Appearance.OutlineColor2;
+			Font.OutlineSettings.bSeparateFillAlpha = true;
+			OuterOutline->SetFont(Font);
+			OuterOutline->SetColorAndOpacity(FSlateColor(Appearance.OutlineColor1));
+			OuterOutline->SetVisibility(EVisibility::SelfHitTestInvisible);
+		}
+
+		// Outer blur (N-step Gaussian)
+		ConfigureBlurLayers(OuterBlurArray, NumBlurSteps, BaseFontInfo,
+			Appearance.OutlineSize1 + Appearance.OutlineSize2, Appearance.OutlineBlur2,
+			Appearance.OutlineColor2, FSlateColor(FLinearColor::Transparent));
+	}
+
+	/** Apply font, size, color, justification and outline to a slot's SubtitleTextBlock. */
 	static void ApplyTextStyling(FSubtitleSlot& Slot, const FSubtitleAppearance& InAppearance)
 	{
 		if (!Slot.SubtitleTextBlock.IsValid()) { return; }
@@ -912,6 +1149,14 @@ namespace
 			default: break;
 			}
 			Slot.SubtitleTextBlock->SetJustification(Justify);
+			// Apply same justification to all outline layers
+			if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetJustification(Justify);
+			if (Slot.OuterOutlineTextBlock.IsValid()) Slot.OuterOutlineTextBlock->SetJustification(Justify);
+			for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+			{
+				if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetJustification(Justify);
+				if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetJustification(Justify);
+			}
 		}
 
 		UObject* LoadedFont = InAppearance.FontAsset.LoadSynchronous();
@@ -920,8 +1165,17 @@ namespace
 			: FCoreStyle::GetDefaultFontStyle("Regular", InAppearance.FontSize);
 
 		Slot.FontInfo = FontInfo;
-		Slot.SubtitleTextBlock->SetFont(FontInfo);
-		Slot.SubtitleTextBlock->SetColorAndOpacity(FSlateColor(InAppearance.TextColor));
+
+		ConfigureOutlineLayers(
+			Slot.SubtitleTextBlock,
+			Slot.InnerOutlineTextBlock,
+			Slot.InnerBlurTextBlocks,
+			Slot.OuterOutlineTextBlock,
+			Slot.OuterBlurTextBlocks,
+			FSubtitleSlot::NumBlurSteps,
+			FontInfo,
+			InAppearance,
+			FSlateColor(InAppearance.TextColor));
 	}
 } // namespace
 
@@ -996,7 +1250,7 @@ void USubtitleSubsystem::ApplyAppearanceToSlot(FSubtitleSlot& Slot, const FSubti
 
 namespace
 {
-	/** Show/hide and style the speaker name text block. */
+	/** Show/hide and style the speaker name text block (with outline support). */
 	static void ApplySpeakerName(FSubtitleSlot& Slot, const FSubtitleAppearance& InAppearance,
 		const FText& InSpeakerName, bool bHasSpeaker)
 	{
@@ -1005,17 +1259,44 @@ namespace
 		if (!bHasSpeaker)
 		{
 			Slot.SpeakerTextBlock->SetVisibility(EVisibility::Collapsed);
+			if (Slot.SpeakerInnerOutlineTextBlock.IsValid()) Slot.SpeakerInnerOutlineTextBlock->SetVisibility(EVisibility::Collapsed);
+			if (Slot.SpeakerOuterOutlineTextBlock.IsValid()) Slot.SpeakerOuterOutlineTextBlock->SetVisibility(EVisibility::Collapsed);
+			for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+			{
+				if (Slot.SpeakerInnerBlurTextBlocks[i].IsValid()) Slot.SpeakerInnerBlurTextBlocks[i]->SetVisibility(EVisibility::Collapsed);
+				if (Slot.SpeakerOuterBlurTextBlocks[i].IsValid()) Slot.SpeakerOuterBlurTextBlocks[i]->SetVisibility(EVisibility::Collapsed);
+			}
 			return;
 		}
 
 		Slot.SpeakerTextBlock->SetText(InSpeakerName);
-		Slot.SpeakerTextBlock->SetColorAndOpacity(FSlateColor(InAppearance.SpeakerNameColor));
 
 		UObject* LoadedFont = InAppearance.FontAsset.LoadSynchronous();
 		const FSlateFontInfo SpeakerFont = LoadedFont
 			? FSlateFontInfo(LoadedFont, InAppearance.SpeakerNameFontSize)
 			: FCoreStyle::GetDefaultFontStyle("Bold", InAppearance.SpeakerNameFontSize);
-		Slot.SpeakerTextBlock->SetFont(SpeakerFont);
+
+		// Set text on all speaker outline layers
+		if (Slot.SpeakerInnerOutlineTextBlock.IsValid()) Slot.SpeakerInnerOutlineTextBlock->SetText(InSpeakerName);
+		if (Slot.SpeakerOuterOutlineTextBlock.IsValid()) Slot.SpeakerOuterOutlineTextBlock->SetText(InSpeakerName);
+		for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+		{
+			if (Slot.SpeakerInnerBlurTextBlocks[i].IsValid()) Slot.SpeakerInnerBlurTextBlocks[i]->SetText(InSpeakerName);
+			if (Slot.SpeakerOuterBlurTextBlocks[i].IsValid()) Slot.SpeakerOuterBlurTextBlocks[i]->SetText(InSpeakerName);
+		}
+
+		// Configure outline layers (also sets font and color on main SpeakerTextBlock)
+		ConfigureOutlineLayers(
+			Slot.SpeakerTextBlock,
+			Slot.SpeakerInnerOutlineTextBlock,
+			Slot.SpeakerInnerBlurTextBlocks,
+			Slot.SpeakerOuterOutlineTextBlock,
+			Slot.SpeakerOuterBlurTextBlocks,
+			FSubtitleSlot::NumBlurSteps,
+			SpeakerFont,
+			InAppearance,
+			FSlateColor(InAppearance.SpeakerNameColor));
+
 		Slot.SpeakerTextBlock->SetVisibility(EVisibility::SelfHitTestInvisible);
 	}
 
@@ -1102,6 +1383,13 @@ namespace
 		// Speaker name: always HAlign_Fill on the slot; text justification drives visual alignment
 		if (Slot.SpeakerTextBlock.IsValid())
 			Slot.SpeakerTextBlock->SetJustification(AlignToJustify(EffectiveAlign));
+		if (Slot.SpeakerInnerOutlineTextBlock.IsValid()) Slot.SpeakerInnerOutlineTextBlock->SetJustification(AlignToJustify(EffectiveAlign));
+		if (Slot.SpeakerOuterOutlineTextBlock.IsValid()) Slot.SpeakerOuterOutlineTextBlock->SetJustification(AlignToJustify(EffectiveAlign));
+		for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+		{
+			if (Slot.SpeakerInnerBlurTextBlocks[i].IsValid()) Slot.SpeakerInnerBlurTextBlocks[i]->SetJustification(AlignToJustify(EffectiveAlign));
+			if (Slot.SpeakerOuterBlurTextBlocks[i].IsValid()) Slot.SpeakerOuterBlurTextBlocks[i]->SetJustification(AlignToJustify(EffectiveAlign));
+		}
 		if (Slot.SpeakerNameSlot)
 			Slot.SpeakerNameSlot->SetHorizontalAlignment(HAlign_Fill);
 
@@ -1174,7 +1462,12 @@ void USubtitleSubsystem::PreMeasureSlotText(FSubtitleSlot& Slot, const FText& In
 
 	const TSharedRef<FSlateFontMeasure> FM =
 		FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
-	const float LineHeight = FM->GetMaxCharacterHeight(Slot.FontInfo, 1.0f);
+
+	// Use a measurement font that includes the max outline extent for accurate sizing
+	FSlateFontInfo MeasureFont = Slot.FontInfo;
+	MeasureFont.OutlineSettings.OutlineSize = GetMaxOutlinePixels(InAppearance);
+
+	const float LineHeight = FM->GetMaxCharacterHeight(MeasureFont, 1.0f);
 	Slot.TypewriterSizerBox->SetHeightOverride(LineHeight * static_cast<float>(Lines.Num()));
 
 	if (InAppearance.TextAlignment != ESubtitleTextAlignment::Left)
@@ -1182,7 +1475,7 @@ void USubtitleSubsystem::PreMeasureSlotText(FSubtitleSlot& Slot, const FText& In
 		float MaxLineWidth = 0.f;
 		for (const FString& Line : Lines)
 		{
-			MaxLineWidth = FMath::Max(MaxLineWidth, FM->Measure(FText::FromString(Line), Slot.FontInfo).X);
+			MaxLineWidth = FMath::Max(MaxLineWidth, FM->Measure(FText::FromString(Line), MeasureFont).X);
 		}
 		if (MaxLineWidth > 0.f)
 		{
@@ -1204,8 +1497,8 @@ void USubtitleSubsystem::StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID,
 
 	Slot.SubtitleBorder->SetRenderOpacity(1.0f);
 	Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform());
-	if (Slot.SpeakerTextBlock.IsValid()) { Slot.SpeakerTextBlock->SetRenderOpacity(1.0f); Slot.SpeakerTextBlock->SetRenderTransform(FSlateRenderTransform()); }
-	if (Slot.SeparatorBox.IsValid())     { Slot.SeparatorBox->SetRenderOpacity(1.0f);     Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
+	if (Slot.SpeakerTextOverlay.IsValid()) { Slot.SpeakerTextOverlay->SetRenderOpacity(1.0f); Slot.SpeakerTextOverlay->SetRenderTransform(FSlateRenderTransform()); }
+	if (Slot.SeparatorBox.IsValid())       { Slot.SeparatorBox->SetRenderOpacity(1.0f);       Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
 
 	if (InType == ESubtitleEntranceType::None || InDuration <= 0.0f)
 	{
@@ -1284,16 +1577,16 @@ void USubtitleSubsystem::ApplySlotAnimationAlpha(FSubtitleSlot& Slot, float Ease
 	auto SetOpacityAll = [&](float O)
 	{
 		Slot.SubtitleBorder->SetRenderOpacity(O);
-		if (Slot.SpeakerTextBlock.IsValid()) Slot.SpeakerTextBlock->SetRenderOpacity(O);
-		if (Slot.SeparatorBox.IsValid())     Slot.SeparatorBox->SetRenderOpacity(O);
+		if (Slot.SpeakerTextOverlay.IsValid()) Slot.SpeakerTextOverlay->SetRenderOpacity(O);
+		if (Slot.SeparatorBox.IsValid())       Slot.SeparatorBox->SetRenderOpacity(O);
 	};
 
 	// Apply the same render transform to every visible component
 	auto SetTransformAll = [&](const FSlateRenderTransform& T)
 	{
 		Slot.SubtitleBorder->SetRenderTransform(T);
-		if (Slot.SpeakerTextBlock.IsValid()) Slot.SpeakerTextBlock->SetRenderTransform(T);
-		if (Slot.SeparatorBox.IsValid())     Slot.SeparatorBox->SetRenderTransform(T);
+		if (Slot.SpeakerTextOverlay.IsValid()) Slot.SpeakerTextOverlay->SetRenderTransform(T);
+		if (Slot.SeparatorBox.IsValid())       Slot.SeparatorBox->SetRenderTransform(T);
 	};
 
 	// For scale effects, apply via EntryVBox so the whole group scales from one pivot.
@@ -1368,11 +1661,96 @@ EActiveTimerReturnType USubtitleSubsystem::TickSlotAnimation(uint32 SlotID, doub
 		Slot.bAnimating = false;
 		Slot.SubtitleBorder->SetRenderOpacity(1.0f);
 		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform());
-		if (Slot.SpeakerTextBlock.IsValid()) { Slot.SpeakerTextBlock->SetRenderOpacity(1.0f); Slot.SpeakerTextBlock->SetRenderTransform(FSlateRenderTransform()); }
-		if (Slot.SeparatorBox.IsValid())     { Slot.SeparatorBox->SetRenderOpacity(1.0f);     Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
+		if (Slot.SpeakerTextOverlay.IsValid()) { Slot.SpeakerTextOverlay->SetRenderOpacity(1.0f); Slot.SpeakerTextOverlay->SetRenderTransform(FSlateRenderTransform()); }
+		if (Slot.SeparatorBox.IsValid())       { Slot.SeparatorBox->SetRenderOpacity(1.0f);       Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
 		if (Slot.EntryVBox.IsValid())        { Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(Slot.Appearance.ScreenOffset)); }
 		return EActiveTimerReturnType::Stop;
 	}
+
+	return EActiveTimerReturnType::Continue;
+}
+
+// ---------------------------------------------------------------------------
+// StartTremble / StopTremble / TickTremble — continuous shake effect
+// ---------------------------------------------------------------------------
+
+void USubtitleSubsystem::StartTremble(FSubtitleSlot& Slot, uint32 SlotID)
+{
+	StopTremble(Slot);
+
+	if (!Slot.Appearance.bTremble || !Slot.SubtitleBorder.IsValid())
+	{
+		return;
+	}
+
+	Slot.TrembleStartTime = FPlatformTime::Seconds();
+
+	Slot.TrembleTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
+		0.0f,
+		FWidgetActiveTimerDelegate::CreateLambda(
+			[this, SlotID](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
+			{
+				return TickTremble(SlotID, InCurrentTime, InDeltaTime);
+			}
+		)
+	);
+}
+
+void USubtitleSubsystem::StopTremble(FSubtitleSlot& Slot)
+{
+	if (Slot.TrembleTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
+	{
+		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.TrembleTimerHandle.ToSharedRef());
+		Slot.TrembleTimerHandle.Reset();
+	}
+}
+
+EActiveTimerReturnType USubtitleSubsystem::TickTremble(uint32 SlotID, double InCurrentTime, float InDeltaTime)
+{
+	TSharedPtr<FSubtitleSlot>* Found = ActiveSlots.Find(SlotID);
+	if (!Found || !Found->IsValid()) { return EActiveTimerReturnType::Stop; }
+
+	FSubtitleSlot& Slot = **Found;
+
+	if (!Slot.Appearance.bTremble || !Slot.SubtitleBorder.IsValid())
+	{
+		return EActiveTimerReturnType::Stop;
+	}
+
+	const double Elapsed = FPlatformTime::Seconds() - Slot.TrembleStartTime;
+	const float Speed = Slot.Appearance.TrembleSpeed;
+	const float Intensity = Slot.Appearance.TrembleIntensity;
+
+	// Use sin/cos with slightly different frequencies for organic-feeling shake
+	const float OffsetX = FMath::Sin(static_cast<float>(Elapsed) * Speed * UE_TWO_PI) * Intensity;
+	const float OffsetY = FMath::Cos(static_cast<float>(Elapsed) * Speed * UE_TWO_PI * 1.3f) * Intensity;
+
+	const FVector2D TrembleOffset(OffsetX, OffsetY);
+
+	// During Slide entrance/exit, add tremble on top of the current slide offset.
+	// During Scale or Fade animations (or no animation), just apply tremble alone.
+	FVector2D BaseOffset = FVector2D::ZeroVector;
+	if (Slot.bAnimating && !Slot.bExitAnim)
+	{
+		// Reconstruct the current slide offset from animation state
+		const float Alpha = FMath::Clamp(Slot.AnimElapsed / Slot.AnimDuration, 0.0f, 1.0f);
+		const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.0f);
+		switch (Slot.AnimType)
+		{
+		case ESubtitleEntranceType::SlideLeft:   BaseOffset.X = -Slot.SlideOffsetX * (1.f - EasedAlpha); break;
+		case ESubtitleEntranceType::SlideRight:  BaseOffset.X =  Slot.SlideOffsetX * (1.f - EasedAlpha); break;
+		case ESubtitleEntranceType::SlideTop:    BaseOffset.Y = -Slot.SlideOffsetY * (1.f - EasedAlpha); break;
+		case ESubtitleEntranceType::SlideBottom: BaseOffset.Y =  Slot.SlideOffsetY * (1.f - EasedAlpha); break;
+		default: break;
+		}
+	}
+
+	const FSlateRenderTransform CombinedTransform(BaseOffset + TrembleOffset);
+
+	// Apply to individual components (not EntryVBox) to avoid conflicting with Scale animations
+	Slot.SubtitleBorder->SetRenderTransform(CombinedTransform);
+	if (Slot.SpeakerTextOverlay.IsValid()) { Slot.SpeakerTextOverlay->SetRenderTransform(CombinedTransform); }
+	if (Slot.SeparatorBox.IsValid())       { Slot.SeparatorBox->SetRenderTransform(CombinedTransform); }
 
 	return EActiveTimerReturnType::Continue;
 }

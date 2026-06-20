@@ -125,6 +125,47 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 MaxCharsPerLine = 0;
 
+	// ---- Text Outline ----
+
+	/** Enable first (inner) text outline for subtitle and speaker name. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline")
+	bool bEnableOutline1 = false;
+
+	/** Pixel size of the first (inner) outline. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1", ClampMin = "1", ClampMax = "20"))
+	int32 OutlineSize1 = 2;
+
+	/** Color of the first (inner) outline. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1"))
+	FLinearColor OutlineColor1 = FLinearColor::Black;
+
+	/** Blur radius for the first outline (0 = sharp edge). Adds a soft glow layer behind the outline. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1", ClampMin = "0.0", ClampMax = "20.0"))
+	float OutlineBlur1 = 0.0f;
+
+	/** Enable second (outer) text outline. Requires first outline to be enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1"))
+	bool bEnableOutline2 = false;
+
+	/** Pixel size of the second (outer) outline (stacks on top of the first). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1 && bEnableOutline2", ClampMin = "1", ClampMax = "20"))
+	int32 OutlineSize2 = 4;
+
+	/** Color of the second (outer) outline. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1 && bEnableOutline2"))
+	FLinearColor OutlineColor2 = FLinearColor(0.0f, 0.0f, 0.0f, 0.5f);
+
+	/** Blur radius for the second outline (0 = sharp edge). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Text Outline",
+		meta = (EditCondition = "bEnableOutline1 && bEnableOutline2", ClampMin = "0.0", ClampMax = "20.0"))
+	float OutlineBlur2 = 0.0f;
+
 	// ---- Message Window ----
 
 	/** Background style: Square, Rounded corners, or custom Image. */
@@ -178,6 +219,22 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entrance / Exit",
 		meta = (ClampMin = "0.0", ClampMax = "3.0", EditCondition = "bOverrideExitAnimation && ExitType != ESubtitleEntranceType::None"))
 	float ExitDuration = 0.3f;
+
+	// ---- Continuous Effect ----
+
+	/** Enable continuous tremble/shake effect on the subtitle text. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Continuous Effect")
+	bool bTremble = false;
+
+	/** Tremble intensity in pixels (maximum random offset). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Continuous Effect",
+		meta = (ClampMin = "0.1", ClampMax = "20.0", EditCondition = "bTremble"))
+	float TrembleIntensity = 1.0f;
+
+	/** Tremble speed (oscillations per second). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Continuous Effect",
+		meta = (ClampMin = "1.0", ClampMax = "60.0", EditCondition = "bTremble"))
+	float TrembleSpeed = 8.0f;
 
 	// ---- Typewriter ----
 

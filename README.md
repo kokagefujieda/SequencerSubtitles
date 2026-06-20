@@ -15,12 +15,15 @@ Sequencer タイムラインに専用トラックを追加し、リアルタイ�
 - Sequencer に **Subtitle Track** を追加
 - エディタ上でのリアルタイムプレビュー
 - Widget Blueprint でカスタマイズ可能な UI
+- 複数字幕の同時表示（マルチスロット）
+- テキストアウトライン（2層・ぼかし対応）
+- 文字の揺れ（トレンブル）演出
 
 ![Sequencer Subtitles Feature](https://milkemist.com/sqs/SQS2.gif)
 
 ## 動作環境
 
-- Unreal Engine 5.5 / 5.6 / 5.7
+- Unreal Engine 5.5 / 5.6 / 5.7 / 5.8
 
 ## インストール
 
@@ -32,6 +35,18 @@ Sequencer タイムラインに専用トラックを追加し、リアルタイ�
 ## ドキュメント
 
 **[Sequencer Subtitles 公式ドキュメント](https://milkemist.com/sqs/)**
+
+## 更新履歴
+
+### v1.3
+- UE 5.8 に対応
+- 複数字幕の同時表示（マルチスロット）に対応
+- テキストアウトライン（2層・ぼかし対応）を追加
+- 文字の揺れ（トレンブル）演出を追加
+- `ShowMessage` / `ShowPersistentMessage` などの Blueprint API を拡充
+
+### v1.2
+- 初回 Fab 公開版
 
 ## ライセンス
 

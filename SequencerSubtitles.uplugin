@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 3,
-	"VersionName": "1.2",
+	"Version": 4,
+	"VersionName": "1.3",
 	"FriendlyName": "Sequencer Subtitles",
 	"Description": "A robust subtitle system for Sequencer with real-time editor preview and customizable UI.",
 	"Category": "Sequencer",
@@ -14,7 +14,7 @@
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
-	"EngineVersion": "5.7.0",
+	"EngineVersion": "5.8.0",
 	"Installed": true,
 	"Modules": [
 		{

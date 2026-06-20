@@ -54,6 +54,22 @@ struct FSubtitleSlot
 	SVerticalBox::FSlot*               SpeakerNameSlot = nullptr;
 	SVerticalBox::FSlot*               SeparatorSlot   = nullptr;
 
+	// --- Outline text layers (subtitle) ---
+	// Blur layers use a 4-step Gaussian-like alpha curve for smooth glow.
+	static constexpr int32 NumBlurSteps = 4;
+	TSharedPtr<SOverlay>               SubtitleTextOverlay;
+	TSharedPtr<STextBlock>             OuterBlurTextBlocks[NumBlurSteps];
+	TSharedPtr<STextBlock>             OuterOutlineTextBlock;
+	TSharedPtr<STextBlock>             InnerBlurTextBlocks[NumBlurSteps];
+	TSharedPtr<STextBlock>             InnerOutlineTextBlock;
+
+	// --- Outline text layers (speaker name) ---
+	TSharedPtr<SOverlay>               SpeakerTextOverlay;
+	TSharedPtr<STextBlock>             SpeakerOuterBlurTextBlocks[NumBlurSteps];
+	TSharedPtr<STextBlock>             SpeakerOuterOutlineTextBlock;
+	TSharedPtr<STextBlock>             SpeakerInnerBlurTextBlocks[NumBlurSteps];
+	TSharedPtr<STextBlock>             SpeakerInnerOutlineTextBlock;
+
 	// --- Subtitle state ---
 	FSubtitleAppearance                Appearance;
 	FText                              Text;
@@ -81,6 +97,10 @@ struct FSubtitleSlot
 	TSharedPtr<FActiveTimerHandle>     AnimTimerHandle;
 	float                              SlideOffsetX  = 2000.f;
 	float                              SlideOffsetY  = 1200.f;
+
+	// --- Tremble state ---
+	TSharedPtr<FActiveTimerHandle>     TrembleTimerHandle;
+	double                             TrembleStartTime = 0.0;
 
 	// --- ShowMessage auto-hide (SlotID=0 only) ---
 	TSharedPtr<FActiveTimerHandle>     AutoHideTimerHandle;
@@ -197,6 +217,10 @@ private:
 	void StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID, ESubtitleEntranceType InType, float InDuration, bool bReverse);
 	void ApplySlotAnimationAlpha(FSubtitleSlot& Slot, float EasedAlpha);
 	EActiveTimerReturnType TickSlotAnimation(uint32 SlotID, double InCurrentTime, float InDeltaTime);
+
+	void StartTremble(FSubtitleSlot& Slot, uint32 SlotID);
+	void StopTremble(FSubtitleSlot& Slot);
+	EActiveTimerReturnType TickTremble(uint32 SlotID, double InCurrentTime, float InDeltaTime);
 
 #if WITH_EDITOR
 	// Per-slot drag callback
