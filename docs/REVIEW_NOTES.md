@@ -184,10 +184,20 @@
 - サンプルのレベルとシーケンスに、アウトラインと Image Track の例を追加する（エディタでの作業）。
 - 対応プラットフォーム: 今は Win64 のみ。プラットフォーム固有のコードはないので、Mac / Linux を加えられる可能性がある（要確認）。
 - 配布用の zip から `CLAUDE.md` と `docs/` を除外する。
+- **uplugin の `EngineVersion`（未決定・ユーザー確認待ち）:** 今は `"5.8.0"` だが、README では 5.5〜5.8 に対応としている。
+  - この項目があると、ほかの版で「別の版向け」の警告や互換性チェックに引っかかる可能性がある（記憶ベース、要確認）。
+  - 案: GitHub 配布では項目を消す。Fab に出すときは、版ごとのパッケージで設定する。
+  - プラグインのアセットは、対応する一番古い版で保存する（新しい版で保存すると古い版では開けない）。
 
 ## 対応状況
 - F1〜F7、A1、A3 は v1.4 で対応した（docs/V1_4_PLAN.md）。
 - A2、A4〜A7 は未着手。
 
 ## 互換性の確認
-- CinematicADV は Build.cs で依存しているだけで、SequencerSubtitles の API をコードから使っていない。今回の変更で CinematicADV のビルドが壊れることはない。
+- ~~CinematicADV は Build.cs で依存しているだけで、SequencerSubtitles の API をコードから使っていない。~~（2026-09-30 時点で古い情報）
+- CinematicADV は、次の API を使うようになった。変えるときは CinematicADV 側も直す。
+  - `USubtitleSubsystem::IsTypewriterRevealing()`（1 回目のクリックで全文表示）
+  - `OnSubtitleSlotStarted`（バックログ・既読の記録。SlotID ＝ セクションの UniqueID であることに依存）
+  - `bIsSubtitleActive` / `CurrentSubtitleText`（オートの文字数）
+  - `UMovieSceneSeqSubtitleSection::SubtitleText`（オートの文字数、既読のキー）
+- そのため、CinematicADV には SequencerSubtitles v1.4（未リリース）が必要。
