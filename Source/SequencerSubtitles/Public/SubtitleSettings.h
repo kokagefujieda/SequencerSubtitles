@@ -385,6 +385,27 @@ public:
 		meta = (ClampMin = "1.0", ClampMax = "30.0", UIMin = "2.0", UIMax = "20.0"))
 	float ClipboardPasteCharsPerSecond = 10.0f;
 
+	/** When adding a section, use the clipboard text as the subtitle (and size the section from its length). */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor")
+	bool bPasteClipboardOnAddSection = true;
+
+	/** Clipboard text longer than this is not pasted when adding a section (0 = no limit). */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor",
+		meta = (EditCondition = "bPasteClipboardOnAddSection", ClampMin = "0"))
+	int32 ClipboardPasteMaxChars = 300;
+
+	/** Allow dragging subtitles and images in the editor viewport to set their position. */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor")
+	bool bEnableViewportDrag = true;
+
+	/**
+	 * Draw subtitles with the plugin's built-in display.
+	 * Turn off to draw them yourself (e.g. a UMG widget bound to OnSubtitleSlotStarted / TextChanged / Ended).
+	 * Image Track and ShowMessage are not affected.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Display")
+	bool bUseBuiltInDisplay = true;
+
 	// --- Section Creation Defaults (set via "Set as Default" on any section) ---
 
 	UPROPERTY(Config, EditAnywhere, Category = "Section Defaults")

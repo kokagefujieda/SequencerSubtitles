@@ -22,6 +22,7 @@ namespace
 struct FSeqImageExecutionToken : IMovieSceneExecutionToken
 {
 	FSeqImageParams Params;
+	FSeqImageKeyedValues Keyed;
 	float  LocalTime = 0.f;
 	float  Duration  = 0.f;
 	uint32 SlotID    = 0;
@@ -43,13 +44,19 @@ struct FSeqImageExecutionToken : IMovieSceneExecutionToken
 #if WITH_EDITOR
 		Section = SourceSection.Get();
 #endif
-		Subsystem->UpdateImage(SlotID, Params, LocalTime, Duration, Section);
+		Subsystem->UpdateImage(SlotID, Params, Keyed, LocalTime, Duration, Section);
 	}
 };
 
 FSeqImageEvalTemplate::FSeqImageEvalTemplate(const UMovieSceneSeqImageSection& InSection)
 {
 	Params = InSection.MakeParams();
+
+	OffsetXCurve  = InSection.OffsetXCurve;
+	OffsetYCurve  = InSection.OffsetYCurve;
+	ScaleCurve    = InSection.ScaleCurve;
+	RotationCurve = InSection.RotationCurve;
+	OpacityCurve  = InSection.OpacityCurve;
 
 	const TRange<FFrameNumber>& Range = InSection.GetRange();
 	if (Range.HasLowerBound()) { SectionStart = Range.GetLowerBoundValue(); }
@@ -95,6 +102,15 @@ void FSeqImageEvalTemplate::Evaluate(
 	const float Duration  = static_cast<float>((SectionEnd - SectionStart).Value / TicksPerSec);
 
 	FSeqImageExecutionToken Token(Params, LocalTime, Duration, SlotID);
+
+	// Keyframes at the current (sequence) time; channels without keys return their neutral default
+	const FFrameTime Time = Context.GetTime();
+	float Value = 0.f;
+	if (OffsetXCurve.Evaluate(Time, Value))  { Token.Keyed.Offset.X = Value; }
+	if (OffsetYCurve.Evaluate(Time, Value))  { Token.Keyed.Offset.Y = Value; }
+	if (ScaleCurve.Evaluate(Time, Value))    { Token.Keyed.Scale    = Value; }
+	if (RotationCurve.Evaluate(Time, Value)) { Token.Keyed.Rotation = Value; }
+	if (OpacityCurve.Evaluate(Time, Value))  { Token.Keyed.Opacity  = Value; }
 #if WITH_EDITOR
 	Token.SourceSection = SourceSection;
 #endif

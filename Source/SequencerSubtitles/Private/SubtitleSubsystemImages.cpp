@@ -212,8 +212,8 @@ namespace SeqImage
 // UpdateImage / RemoveImage
 // ---------------------------------------------------------------------------
 
-void USubtitleSubsystem::UpdateImage(uint32 SlotID, const FSeqImageParams& Params, float LocalTime, float Duration,
-	UMovieSceneSeqImageSection* SourceSection)
+void USubtitleSubsystem::UpdateImage(uint32 SlotID, const FSeqImageParams& Params, const FSeqImageKeyedValues& Keyed,
+	float LocalTime, float Duration, UMovieSceneSeqImageSection* SourceSection)
 {
 	// Outside the section (e.g. nearest-section evaluation in a gap): nothing to show
 	if (Duration <= 0.f || LocalTime < 0.f || LocalTime >= Duration)
@@ -234,6 +234,7 @@ void USubtitleSubsystem::UpdateImage(uint32 SlotID, const FSeqImageParams& Param
 	FSeqImageSlot& Slot = *SlotPtr;
 
 	Slot.Params = Params;
+	Slot.Keyed  = Keyed;
 #if WITH_EDITOR
 	Slot.Section = SourceSection;
 #endif
@@ -415,6 +416,11 @@ void USubtitleSubsystem::ApplyImageState(FSeqImageSlot& Slot, float LocalTime, f
 	// --- Continuous effect ---
 	SeqImage::ApplyContinuous(P.Continuous, LocalTime, Duration, Translate, Scale);
 
+	// --- Keyframes (on top of the settings) ---
+	Scale    *= static_cast<double>(Slot.Keyed.Scale);
+	AngleDeg += Slot.Keyed.Rotation;
+	Opacity  *= Slot.Keyed.Opacity;
+
 	// --- Mirroring ---
 	if (P.Layout.bFlipX) { Scale.X = -Scale.X; }
 	if (P.Layout.bFlipY) { Scale.Y = -Scale.Y; }
@@ -446,10 +452,15 @@ void USubtitleSubsystem::ApplyImageState(FSeqImageSlot& Slot, float LocalTime, f
 		Slot.MotionAlpha = SeqImage::Ease(P.Motion.Easing, U);
 		Offset = FMath::Lerp(P.Layout.Offset, P.Motion.EndOffset, static_cast<double>(Slot.MotionAlpha));
 	}
+	Offset += Slot.Keyed.Offset;
 
 #if WITH_EDITOR
 	if (Slot.DragHandle.IsValid())
 	{
+		// Draggable only when enabled; full-screen images never take the click (the viewport stays usable)
+		const bool bFullScreen = P.Layout.SizeMode == ESeqImageSizeMode::FitScreen || P.Layout.SizeMode == ESeqImageSizeMode::FillScreen;
+		Slot.RootWidget->SetVisibility((IsViewportDragAllowed() && !bFullScreen) ? EVisibility::Visible : EVisibility::HitTestInvisible);
+
 		// While dragging, the handle moves the image itself
 		if (Slot.DragHandle->IsDragging()) { return; }
 		Slot.DragHandle->SetCurrentOffset(Offset);
@@ -473,6 +484,10 @@ void USubtitleSubsystem::OnImageDragFinished(uint32 SlotID, FVector2D NewOffset)
 	FSeqImageParams& P = Slot.Params;
 	FVector2D NewStart = P.Layout.Offset;
 	FVector2D NewEnd   = P.Motion.EndOffset;
+
+	// The keyframed offset stays on top of what is edited here
+	const FVector2D DisplayedOffset = NewOffset;
+	NewOffset -= Slot.Keyed.Offset;
 
 	if (!P.Motion.bEnabled)
 	{
@@ -504,6 +519,6 @@ void USubtitleSubsystem::OnImageDragFinished(uint32 SlotID, FVector2D NewOffset)
 		Section->Motion.EndOffset = NewEnd;
 	}
 
-	Slot.OffsetBox->SetRenderTransform(FSlateRenderTransform(FVector2f(NewOffset)));
+	Slot.OffsetBox->SetRenderTransform(FSlateRenderTransform(FVector2f(DisplayedOffset)));
 }
 #endif

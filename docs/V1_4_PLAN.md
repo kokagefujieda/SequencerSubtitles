@@ -72,12 +72,44 @@
   - Image Track がなければ作る。
   - 使うのは `HandleAssetAdded`（オーディオトラックと同じ仕組み）。
 
-## 確認したい点（既定案）
+## 決定事項（Q1〜Q4 は、すべて既定案で回答済み）
 
-- Q1: 字幕 OFF のとき、ShowMessage も消すか → 既定案: **消さない**（ShowMessage は台詞以外のメッセージにも使えるため）
-- Q2: 字幕 OFF のとき、イベント（OnSubtitleStarted など）を通知するか → 既定案: **通知する**（バックログなどのゲーム側の処理が止まらないように）
-- Q3: エンジン標準の字幕 ON/OFF（`GEngine->bSubtitlesEnabled`）と連動させるか → 既定案: **連動する**（Set 時に同期する）
-- Q4: キーフレームの効き方 → 既定案: **Layout の設定に重ねる**（Offset は加算、Scale と Opacity は乗算、Rotation は加算）。キーがなければ何もしない
+- Q1: 字幕を OFF にしても、ShowMessage は**消さない**。
+- Q2: 字幕を OFF にしても、イベントは**通知する**。
+- Q3: エンジン標準の字幕 ON/OFF と**連動させる**。
+  - `SetSubtitlesEnabled` を呼ぶと `GEngine->bSubtitlesEnabled` も切り替える。
+  - 表示するのは、両方が ON のときだけ。
+  - 起動時にこちらからエンジン側を書き換えることはしない（ゲーム独自の設定を上書きしないため）。
+- Q4: キーフレームは**重ねる**。Offset と Rotation は加算、Scale と Opacity は乗算。
+
+## 実装状況（コミット済み・**未ビルド**）
+
+| 項目 | 状態 | 補足 |
+|---|---|---|
+| F1 | 済 | eval token が毎フレーム時刻を渡し、`ApplySubtitleVisual` で計算する。ShowMessage は `FTSTicker` で時計を進める。タイプライターは退場の前に打ち終わるように調整した |
+| F2 | 済 | `SubtitleGroups`（キー＝位置＋パディング）。WidgetOverlay の Z 順は 画像(後)0 / 字幕 1 / 画像(前)2 |
+| F3 | 済 | `bUseBuiltInDisplay`、`OnSubtitleSlotStarted` / `OnSubtitleSlotTextChanged` / `OnSubtitleSlotEnded`。README を修正 |
+| F4 | 済 | `bEnableViewportDrag`。ドラッグハンドルはエディタのビューポートでだけ作る。**PIE では字幕がクリックを吸わなくなった**（CinematicADV のクリック送りの妨げになる可能性があったため） |
+| F5 | 済 | `SlotWindowTextures` / `SlotLineTextures` |
+| F6 | 済 | `RebuildTypewriterSizer` で TextAlignment に合わせる |
+| F7 | 済 | `bPasteClipboardOnAddSection` / `ClipboardPasteMaxChars` |
+| A1 | 済 | `USubtitleUserSettings`（GameUserSettings.ini）と `USubtitleUserSettingsLibrary`。変更は表示中の字幕にもすぐ反映する |
+| A3 | 済 | チャンネル 5 本（`CacheChannelProxy`）、サムネイル（セクションの高さ 40）、`HandleAssetAdded` |
+
+### 実装で決めたこと
+- タイプライターの効果音は、プラグイン自身が字幕を表示しているときだけ鳴らす（組み込み表示 OFF や、字幕 OFF のときは鳴らさない）。
+- `OnSubtitleSlotStarted` で渡す Appearance は、作者が設定した値（プレイヤー設定を適用する前）。自作 UI 側で `GetSubtitleTextScale` などを使う想定。
+- `OnSubtitleEnded` は、字幕が消えた時点で通知する（以前は退場の開始時）。
+- ShowMessage を HideMessage で途中で消す場合は、その時点から退場する。登場の途中なら、登場と退場のうち不透明度が低いほうを採る。
+- 旧 API（スロット ID なしの `NotifySubtitleStarted`）は、subsystem の時計で動き、`NotifySubtitleEnded()` で退場する。
+- 字幕 OFF・ON の切り替えは、表示中の字幕にもすぐ反映する（非表示にするだけで、状態は保持する）。
+
+### 確認してほしいこと
+- ビルド（特に `CacheChannelProxy`、`FMovieSceneChannelMetaData`、`TMovieSceneExternalValue`、`HandleAssetAdded`、`FTSTicker`）
+- 字幕: スクラブ・逆再生での登場と退場、退場がセクション内で終わること、MRQ での書き出し、上下同時の表示、PIE でのクリック
+- ShowMessage: 自動で消えるタイミングと HideMessage
+- プレイヤー設定: 文字サイズ・背景の濃さ・ON/OFF がすぐ反映され、保存されること
+- 画像: キーフレーム（カーブエディタ）、サムネイル、コンテンツブラウザからのドロップ、全画面の画像でもビューポートを操作できること
 
 ## リスク
 - F1 と F2 は字幕の中核の作り替えになる。ビルドと動作の確認は、ユーザー側でお願いする。

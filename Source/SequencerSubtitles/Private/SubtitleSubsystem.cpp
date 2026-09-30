@@ -16,6 +16,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Images/SImage.h"
 #include "SSubtitleSeparatorLine.h"
+#include "SubtitleUserSettings.h"
 #include "Engine/Font.h"
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformTime.h"
@@ -35,6 +36,14 @@
 // EnsureSlateWidgets
 // ---------------------------------------------------------------------------
 
+namespace
+{
+	/** Z-order in WidgetOverlay: images behind (0) -> subtitle position groups (1) -> images in front (2). */
+	constexpr int32 ImageBackZOrder     = 0;
+	constexpr int32 SubtitleGroupZOrder = 1;
+	constexpr int32 ImageFrontZOrder    = 2;
+}
+
 void USubtitleSubsystem::EnsureSlateWidgets()
 {
 	if (WidgetOverlay.IsValid())
@@ -42,29 +51,20 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 		return;
 	}
 
-	// ContentVerticalBox stacks all active subtitle entries
-	ContentVerticalBox = SNew(SVerticalBox);
-
 	// Full-screen image layers behind and in front of the subtitles
 	ImageLayerBack  = SNew(SOverlay).Visibility(EVisibility::SelfHitTestInvisible);
 	ImageLayerFront = SNew(SOverlay).Visibility(EVisibility::SelfHitTestInvisible);
 
-	WidgetOverlay = SNew(SOverlay)
-		+ SOverlay::Slot()
-		[
-			ImageLayerBack.ToSharedRef()
-		]
-		+ SOverlay::Slot()
-		.Expose(OverlaySlot)
-		.VAlign(VAlign_Bottom)
-		.Padding(40.f, 20.f)
-		[
-			ContentVerticalBox.ToSharedRef()
-		]
-		+ SOverlay::Slot()
-		[
-			ImageLayerFront.ToSharedRef()
-		];
+	// Subtitle position groups are added between them (PlaceSlotInGroup)
+	WidgetOverlay = SNew(SOverlay);
+	WidgetOverlay->AddSlot(ImageBackZOrder)
+	[
+		ImageLayerBack.ToSharedRef()
+	];
+	WidgetOverlay->AddSlot(ImageFrontZOrder)
+	[
+		ImageLayerFront.ToSharedRef()
+	];
 
 	WidgetOverlay->SetVisibility(EVisibility::Hidden);
 
@@ -76,7 +76,7 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 }
 
 // ---------------------------------------------------------------------------
-// CreateSlotWidget — builds one subtitle entry and appends it to ContentVerticalBox
+// CreateSlotWidget — builds one subtitle entry (placed on screen by PlaceSlotInGroup)
 // ---------------------------------------------------------------------------
 
 void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
@@ -198,76 +198,49 @@ void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
 			Slot.MessageWindowBox.ToSharedRef()
 		];
 
-#if WITH_EDITOR
-	// Wrap in a per-slot drag handle so each subtitle can be positioned independently
-	Slot.DragHandle = SNew(SSubtitleDragHandle)
-		[
-			Slot.EntryVBox.ToSharedRef()
-		];
-	Slot.DragHandle->SetOnDragFinished(FOnSubtitleDragFinished::CreateWeakLambda(this,
-		[this, SlotID](FVector2D NewOffset)
-		{
-			OnSlotDragOffsetChanged(SlotID, NewOffset);
-		}
-	));
-	Slot.DragHandle->SetViewportWidget(WidgetOverlay);
+	Slot.RootWidget = Slot.EntryVBox;
 
-	ContentVerticalBox->AddSlot()
-		.AutoHeight()
-		.Padding(0, 0, 0, 4)
-		[
-			Slot.DragHandle.ToSharedRef()
-		];
-#else
-	ContentVerticalBox->AddSlot()
-		.AutoHeight()
-		.Padding(0, 0, 0, 4)
-		[
-			Slot.EntryVBox.ToSharedRef()
-		];
+#if WITH_EDITOR
+	// Editor viewport: wrap in a per-slot drag handle so each subtitle can be positioned independently
+	if (bIsEditorViewport)
+	{
+		Slot.DragHandle = SNew(SSubtitleDragHandle)
+			[
+				Slot.EntryVBox.ToSharedRef()
+			];
+		Slot.DragHandle->SetOnDragFinished(FOnSubtitleDragFinished::CreateWeakLambda(this,
+			[this, SlotID](FVector2D NewOffset)
+			{
+				OnSlotDragOffsetChanged(SlotID, NewOffset);
+			}
+		));
+		Slot.DragHandle->SetViewportWidget(WidgetOverlay);
+		Slot.RootWidget = Slot.DragHandle;
+	}
 #endif
 }
 
 // ---------------------------------------------------------------------------
-// RemoveSlotWidget — removes one entry from ContentVerticalBox
+// RemoveSlot — removes one subtitle (widgets and state)
 // ---------------------------------------------------------------------------
 
-void USubtitleSubsystem::RemoveSlotWidget(uint32 SlotID)
+void USubtitleSubsystem::RemoveSlot(uint32 SlotID, bool bBroadcast)
 {
-	TSharedPtr<FSubtitleSlot>* Found = ActiveSlots.Find(SlotID);
-	if (!Found || !Found->IsValid()) { return; }
+	TSharedPtr<FSubtitleSlot> SlotPtr;
+	if (!ActiveSlots.RemoveAndCopyValue(SlotID, SlotPtr) || !SlotPtr.IsValid()) { return; }
 
-	FSubtitleSlot& Slot = **Found;
-
-	// Stop any running timers
-	if (Slot.AnimTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
+	RemoveSlotFromGroup(*SlotPtr);
+	if (SlotPtr->bSelfClocked)
 	{
-		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AnimTimerHandle.ToSharedRef());
-		Slot.AnimTimerHandle.Reset();
-	}
-	if (Slot.AutoHideTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
-	{
-		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AutoHideTimerHandle.ToSharedRef());
-		Slot.AutoHideTimerHandle.Reset();
-	}
-	StopTremble(Slot);
-
-	// Remove widget from the stack
-	if (ContentVerticalBox.IsValid())
-	{
-#if WITH_EDITOR
-		if (Slot.DragHandle.IsValid())
-			ContentVerticalBox->RemoveSlot(Slot.DragHandle.ToSharedRef());
-		else if (Slot.EntryVBox.IsValid())
-			ContentVerticalBox->RemoveSlot(Slot.EntryVBox.ToSharedRef());
-#else
-		if (Slot.EntryVBox.IsValid())
-			ContentVerticalBox->RemoveSlot(Slot.EntryVBox.ToSharedRef());
-#endif
+		StopSelfClock();
 	}
 
-	ActiveSlots.Remove(SlotID);
 	SlotSoundCache.Remove(SlotID);
+	SlotWindowTextures.Remove(SlotID);
+	SlotLineTextures.Remove(SlotID);
+#if WITH_EDITOR
+	ActiveSections.Remove(SlotID);
+#endif
 
 	// Hide overlay when nothing remains
 	UpdateOverlayVisibility();
@@ -277,6 +250,92 @@ void USubtitleSubsystem::RemoveSlotWidget(uint32 SlotID)
 	{
 		bIsSubtitleActive = false;
 		CurrentSubtitleText = FText::GetEmpty();
+	}
+
+	if (bBroadcast)
+	{
+		OnSubtitleEnded.Broadcast();
+		OnSubtitleSlotEnded.Broadcast(static_cast<int32>(SlotID));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Position groups — subtitles with the same position stack in one vertical box
+// ---------------------------------------------------------------------------
+
+void USubtitleSubsystem::PlaceSlotInGroup(FSubtitleSlot& Slot)
+{
+	if (!WidgetOverlay.IsValid() || !Slot.RootWidget.IsValid()) { return; }
+
+	const FSubtitleAppearance& A = Slot.Appearance;
+	const FString Key = FString::Printf(TEXT("%d|%d|%.2f|%.2f|%.2f|%.2f"),
+		static_cast<int32>(A.VerticalPosition), static_cast<int32>(A.HorizontalPosition),
+		A.ScreenPadding.Left, A.ScreenPadding.Top, A.ScreenPadding.Right, A.ScreenPadding.Bottom);
+
+	if (Slot.bInGroup && Slot.GroupKey == Key) { return; }
+	RemoveSlotFromGroup(Slot);
+
+	TSharedPtr<SVerticalBox>& Box = SubtitleGroups.FindOrAdd(Key);
+	if (!Box.IsValid())
+	{
+		EVerticalAlignment VAlign = VAlign_Bottom;
+		switch (A.VerticalPosition)
+		{
+		case ESubtitleVerticalPosition::Top:    VAlign = VAlign_Top;    break;
+		case ESubtitleVerticalPosition::Center: VAlign = VAlign_Center; break;
+		default:                                VAlign = VAlign_Bottom; break;
+		}
+
+		EHorizontalAlignment HAlign = HAlign_Fill;
+		switch (A.HorizontalPosition)
+		{
+		case ESubtitleHorizontalPosition::Left:  HAlign = HAlign_Left;  break;
+		case ESubtitleHorizontalPosition::Right: HAlign = HAlign_Right; break;
+		default:                                 HAlign = HAlign_Fill;  break;
+		}
+
+		Box = SNew(SVerticalBox);
+		WidgetOverlay->AddSlot(SubtitleGroupZOrder)
+			.HAlign(HAlign)
+			.VAlign(VAlign)
+			.Padding(A.ScreenPadding)
+			[
+				Box.ToSharedRef()
+			];
+	}
+
+	Box->AddSlot()
+		.AutoHeight()
+		.Padding(0, 0, 0, 4)
+		[
+			Slot.RootWidget.ToSharedRef()
+		];
+
+	Slot.GroupKey = Key;
+	Slot.bInGroup = true;
+}
+
+void USubtitleSubsystem::RemoveSlotFromGroup(FSubtitleSlot& Slot)
+{
+	if (!Slot.bInGroup) { return; }
+	Slot.bInGroup = false;
+
+	TSharedPtr<SVerticalBox>* Box = SubtitleGroups.Find(Slot.GroupKey);
+	if (!Box || !Box->IsValid()) { return; }
+
+	if (Slot.RootWidget.IsValid())
+	{
+		(*Box)->RemoveSlot(Slot.RootWidget.ToSharedRef());
+	}
+
+	// Drop the group when it is empty
+	if ((*Box)->NumSlots() == 0)
+	{
+		if (WidgetOverlay.IsValid())
+		{
+			WidgetOverlay->RemoveSlot(Box->ToSharedRef());
+		}
+		SubtitleGroups.Remove(Slot.GroupKey);
 	}
 }
 
@@ -430,75 +489,104 @@ void USubtitleSubsystem::NotifySubtitleStarted(uint32 SlotID, const FText& InSub
 	CurrentSpeakerName  = InSpeakerName;
 	CurrentAppearance   = InAppearance;
 
-	EnsureSlateWidgets();
-	AddToViewport();
-
 	// Get or create the slot
-	TSharedPtr<FSubtitleSlot>& SlotPtr = ActiveSlots.FindOrAdd(SlotID);
-	if (!SlotPtr.IsValid())
+	TSharedPtr<FSubtitleSlot>& SlotEntry = ActiveSlots.FindOrAdd(SlotID);
+	if (!SlotEntry.IsValid())
 	{
-		SlotPtr = MakeShared<FSubtitleSlot>();
+		SlotEntry = MakeShared<FSubtitleSlot>();
+		SlotEntry->SlotID = SlotID;
 	}
+	const TSharedPtr<FSubtitleSlot> SlotPtr = SlotEntry;
 	FSubtitleSlot& Slot = *SlotPtr;
 
+	// A restarted ShowMessage stops its clock (ShowMessageEx starts it again)
+	if (Slot.bSelfClocked)
+	{
+		StopSelfClock();
+	}
+
 	// Reset per-slot state
-	Slot.Text                = InSubtitleText;
-	Slot.SpeakerName         = InSpeakerName;
-	Slot.BarColor            = InBarColor;
-	Slot.Appearance          = InAppearance;
-	Slot.bTypewriterActive   = false;
-	Slot.LastSoundCharIndex  = -1;
-	Slot.LastSoundPlayTime   = 0.0;
-	Slot.CurrentPageIndex    = 0;
+	Slot.Text                 = InSubtitleText;
+	Slot.VisibleText          = InSubtitleText;
+	Slot.SpeakerName          = InSpeakerName;
+	Slot.BarColor             = InBarColor;
+	Slot.SourceAppearance     = InAppearance;
+	Slot.Appearance           = MakeEffectiveAppearance(InAppearance);
+	Slot.bTypewriterActive    = false;
+	Slot.LastSoundCharIndex   = -1;
+	Slot.LastSoundPlayTime    = 0.0;
+	Slot.LastVisibleCharCount = -1;
+	Slot.CurrentPageIndex     = 0;
 	Slot.TypewriterPages.Empty();
 	Slot.TypewriterPageCharStarts.Empty();
-	Slot.bPendingRemoval     = false;
+	Slot.bSelfClocked         = false;
+	Slot.LocalTime            = 0.f;
+	Slot.Duration             = 0.f;
 
-	if (!Slot.EntryVBox.IsValid())
+	// Built-in display (off when the project draws subtitles itself from the events)
+	if (GetDefault<USubtitleSettings>()->bUseBuiltInDisplay)
 	{
-		CreateSlotWidget(SlotID, Slot);
-	}
-	else
-	{
-		// Reset typewriter sizing if reusing an existing widget
-		if (Slot.TypewriterSizerOverlay.IsValid())
+		EnsureSlateWidgets();
+		AddToViewport();
+
+		if (!Slot.EntryVBox.IsValid())
 		{
-			Slot.TypewriterSizerOverlay->ClearChildren();
+			CreateSlotWidget(SlotID, Slot);
 		}
-		if (Slot.SubtitleBorder.IsValid())
+		else
 		{
-			Slot.SubtitleBorder->SetHAlign(HAlign_Fill);
+			// Reset typewriter sizing if reusing an existing widget
+			if (Slot.TypewriterSizerOverlay.IsValid())
+			{
+				Slot.TypewriterSizerOverlay->ClearChildren();
+			}
+			if (Slot.SubtitleBorder.IsValid())
+			{
+				Slot.SubtitleBorder->SetHAlign(HAlign_Fill);
+			}
 		}
-	}
 
-	ApplyAppearanceToSlot(Slot, InAppearance);
-	ApplySpeakerAndSeparatorToSlot(Slot, InAppearance, InSpeakerName);
+		ApplyAppearanceToSlot(Slot, Slot.Appearance);
+		ApplySpeakerAndSeparatorToSlot(Slot, Slot.Appearance, InSpeakerName);
+		PlaceSlotInGroup(Slot);
 
-	if (Slot.SubtitleTextBlock.IsValid())
-	{
-		Slot.SubtitleTextBlock->SetText(InSubtitleText);
-	}
-	// Sync text to outline layers
-	if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetText(InSubtitleText);
-	if (Slot.OuterOutlineTextBlock.IsValid()) Slot.OuterOutlineTextBlock->SetText(InSubtitleText);
-	for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
-	{
-		if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetText(InSubtitleText);
-		if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetText(InSubtitleText);
-	}
+		if (Slot.SubtitleTextBlock.IsValid())
+		{
+			Slot.SubtitleTextBlock->SetText(InSubtitleText);
+		}
+		// Sync text to outline layers
+		if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetText(InSubtitleText);
+		if (Slot.OuterOutlineTextBlock.IsValid()) Slot.OuterOutlineTextBlock->SetText(InSubtitleText);
+		for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+		{
+			if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetText(InSubtitleText);
+			if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetText(InSubtitleText);
+		}
 
-	WidgetOverlay->SetVisibility(EVisibility::SelfHitTestInvisible);
-	StartSlotAnimation(Slot, SlotID, InAppearance.EntranceType, InAppearance.EntranceDuration, false);
-	StartTremble(Slot, SlotID);
+		// First frame of the entrance until the clock updates it
+		ApplySubtitleVisual(Slot);
+		UpdateOverlayVisibility();
+	}
 
 	OnSubtitleStarted.Broadcast(InSubtitleText, InBarColor, InSpeakerName);
+	OnSubtitleSlotStarted.Broadcast(static_cast<int32>(SlotID), InSubtitleText, InSpeakerName, InAppearance);
 }
 
-// Legacy (SlotID=0)
+// Legacy (SlotID=0): no sequence time, so it runs on the subsystem clock until NotifySubtitleEnded()
 void USubtitleSubsystem::NotifySubtitleStarted(const FText& InSubtitleText, FLinearColor InBarColor,
 	const FSubtitleAppearance& InAppearance, const FText& InSpeakerName)
 {
 	NotifySubtitleStarted(0, InSubtitleText, InBarColor, InAppearance, InSpeakerName);
+
+	TSharedPtr<FSubtitleSlot>* SlotPtr = ActiveSlots.Find(0);
+	if (!SlotPtr || !SlotPtr->IsValid()) { return; }
+
+	FSubtitleSlot& Slot = **SlotPtr;
+	Slot.bSelfClocked = true;
+	Slot.LocalTime    = 0.f;
+	Slot.Duration     = -1.f;
+	ApplySubtitleVisual(Slot);
+	StartSelfClock();
 }
 
 // ---------------------------------------------------------------------------
@@ -512,23 +600,40 @@ void USubtitleSubsystem::NotifySubtitleEnded(uint32 SlotID)
 
 	FSubtitleSlot& Slot = **Found;
 
-	if (Slot.bPendingRemoval) { return; }
-
-	const ESubtitleEntranceType ExitType     = Slot.Appearance.GetEffectiveExitType();
-	const float                 ExitDuration = Slot.Appearance.GetEffectiveExitDuration();
-
-	if (ExitType != ESubtitleEntranceType::None && ExitDuration > 0.0f)
+	if (Slot.bSelfClocked)
 	{
-		// Deferred removal: animation tick will call RemoveSlotWidget when done
-		Slot.bPendingRemoval = true;
-		StartSlotAnimation(Slot, SlotID, ExitType, ExitDuration, true);
-	}
-	else
-	{
-		RemoveSlotWidget(SlotID);
+		// ShowMessage: play the exit from now on; the clock removes the slot when it finishes
+		const float ExitDuration = (Slot.Appearance.GetEffectiveExitType() != ESubtitleEntranceType::None)
+			? FMath::Max(Slot.Appearance.GetEffectiveExitDuration(), 0.f)
+			: 0.f;
+		if (ExitDuration > 0.f)
+		{
+			const float ExitEnd = Slot.LocalTime + ExitDuration;
+			if (Slot.Duration < 0.f || ExitEnd < Slot.Duration)
+			{
+				Slot.Duration = ExitEnd;
+			}
+			return;
+		}
 	}
 
-	OnSubtitleEnded.Broadcast();
+	// Sequencer subtitles already played their exit inside the section
+	RemoveSlot(SlotID);
+}
+
+// ---------------------------------------------------------------------------
+// UpdateSubtitleTime (sequencer clock)
+// ---------------------------------------------------------------------------
+
+void USubtitleSubsystem::UpdateSubtitleTime(uint32 SlotID, float LocalTime, float Duration)
+{
+	TSharedPtr<FSubtitleSlot>* Found = ActiveSlots.Find(SlotID);
+	if (!Found || !Found->IsValid()) { return; }
+
+	FSubtitleSlot& Slot = **Found;
+	Slot.LocalTime = LocalTime;
+	Slot.Duration  = Duration;
+	ApplySubtitleVisual(Slot);
 }
 
 // Legacy (SlotID=0)
@@ -548,17 +653,16 @@ void USubtitleSubsystem::UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCh
 
 	FSubtitleSlot& Slot = **Found;
 
-	if (!Slot.SubtitleTextBlock.IsValid()) { return; }
-
 	const FString FullStr    = Slot.Text.ToString();
 	const int32   TotalChars = FullStr.Len();
 	const int32   ShowChars  = FMath::Clamp(VisibleCharCount, 0, TotalChars);
 
-	// First call: set up fixed-width centering and paging
+	// First call: set up paging and the fixed layout
 	if (!Slot.bTypewriterActive)
 	{
 		InitTypewriterState(Slot, SlotID, FullStr);
 	}
+	if (Slot.TypewriterPages.Num() == 0) { return; }
 
 	// Determine current page
 	int32 PageIdx = 0;
@@ -577,31 +681,45 @@ void USubtitleSubsystem::UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCh
 		OnPageAdvanced.Broadcast(PageIdx);
 	}
 
-	const FString& PageText      = Slot.TypewriterPages[PageIdx];
-	const int32    PageLocalChars = ShowChars - Slot.TypewriterPageCharStarts[PageIdx];
-	const int32    ClampedLocal  = FMath::Clamp(PageLocalChars, 0, PageText.Len());
-
-	PlayTypewriterSoundForSlot(Slot, SlotID, ShowChars);
-
-	const FText TypewriterText = FText::FromString(PageText.Left(ClampedLocal));
-	Slot.SubtitleTextBlock->SetText(TypewriterText);
-	// Sync text to outline layers
-	auto SetTextIfVisible = [&TypewriterText](const TSharedPtr<STextBlock>& TB)
+	// Typewriter sound only while the plugin itself shows the subtitle
+	if (Slot.EntryVBox.IsValid() && ShouldDisplaySlot(Slot))
 	{
-		if (TB.IsValid() && TB->GetVisibility() != EVisibility::Collapsed) TB->SetText(TypewriterText);
-	};
-	SetTextIfVisible(Slot.InnerOutlineTextBlock);
-	SetTextIfVisible(Slot.OuterOutlineTextBlock);
-	for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
-	{
-		SetTextIfVisible(Slot.InnerBlurTextBlocks[i]);
-		SetTextIfVisible(Slot.OuterBlurTextBlocks[i]);
+		PlayTypewriterSoundForSlot(Slot, SlotID, ShowChars);
 	}
 
 	if (ShowChars >= TotalChars)
 	{
 		SlotSoundCache.Remove(SlotID);
 	}
+
+	if (ShowChars == Slot.LastVisibleCharCount) { return; }
+	Slot.LastVisibleCharCount = ShowChars;
+
+	const FString& PageText       = Slot.TypewriterPages[PageIdx];
+	const int32    PageLocalChars = ShowChars - Slot.TypewriterPageCharStarts[PageIdx];
+	const int32    ClampedLocal   = FMath::Clamp(PageLocalChars, 0, PageText.Len());
+
+	const FText TypewriterText = FText::FromString(PageText.Left(ClampedLocal));
+	Slot.VisibleText = TypewriterText;
+
+	if (Slot.SubtitleTextBlock.IsValid())
+	{
+		Slot.SubtitleTextBlock->SetText(TypewriterText);
+		// Sync text to outline layers
+		auto SetTextIfVisible = [&TypewriterText](const TSharedPtr<STextBlock>& TB)
+		{
+			if (TB.IsValid() && TB->GetVisibility() != EVisibility::Collapsed) TB->SetText(TypewriterText);
+		};
+		SetTextIfVisible(Slot.InnerOutlineTextBlock);
+		SetTextIfVisible(Slot.OuterOutlineTextBlock);
+		for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+		{
+			SetTextIfVisible(Slot.InnerBlurTextBlocks[i]);
+			SetTextIfVisible(Slot.OuterBlurTextBlocks[i]);
+		}
+	}
+
+	OnSubtitleSlotTextChanged.Broadcast(static_cast<int32>(SlotID), TypewriterText);
 }
 
 // Legacy (SlotID=0)
@@ -672,30 +790,47 @@ void USubtitleSubsystem::InitTypewriterState(FSubtitleSlot& Slot, uint32 SlotID,
 		Slot.TypewriterPageCharStarts.Add(0);
 	}
 
+	RebuildTypewriterSizer(Slot);
+}
+
+void USubtitleSubsystem::RebuildTypewriterSizer(FSubtitleSlot& Slot)
+{
+	if (!Slot.bTypewriterActive || !Slot.TypewriterSizerOverlay.IsValid()
+		|| !Slot.SubtitleBorder.IsValid() || !Slot.SubtitleTextBlock.IsValid())
+	{
+		return;
+	}
+
 	// Reserve the final layout: a transparent copy of every page sits behind the visible text,
 	// so the box is as wide as the widest line and as tall as the tallest page. Slate lays these
 	// out at the actual render scale and re-wraps them on resize (include outline extent).
-	if (Slot.TypewriterSizerOverlay.IsValid() && Slot.SubtitleBorder.IsValid())
+	Slot.TypewriterSizerOverlay->ClearChildren();
+
+	FSlateFontInfo SizerFont = Slot.FontInfo;
+	SizerFont.OutlineSettings.OutlineSize  = GetMaxOutlinePixels(Slot.Appearance);
+	SizerFont.OutlineSettings.OutlineColor = FLinearColor::Transparent;
+
+	for (const FString& Page : Slot.TypewriterPages)
 	{
-		Slot.TypewriterSizerOverlay->ClearChildren();
-
-		FSlateFontInfo SizerFont = Slot.FontInfo;
-		SizerFont.OutlineSettings.OutlineSize  = GetMaxOutlinePixels(Slot.Appearance);
-		SizerFont.OutlineSettings.OutlineColor = FLinearColor::Transparent;
-
-		for (const FString& Page : Slot.TypewriterPages)
-		{
-			Slot.TypewriterSizerOverlay->AddSlot()
-			[
-				SNew(STextBlock)
-				.Text(FText::FromString(Page))
-				.Font(SizerFont)
-				.ColorAndOpacity(FLinearColor::Transparent)
-				.AutoWrapText(true)
-			];
-		}
-		Slot.SubtitleBorder->SetHAlign(HAlign_Center);
+		Slot.TypewriterSizerOverlay->AddSlot()
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(Page))
+			.Font(SizerFont)
+			.ColorAndOpacity(FLinearColor::Transparent)
+			.AutoWrapText(true)
+		];
 	}
+
+	// Place the block where the finished text would be; lines grow from the left inside it
+	EHorizontalAlignment BlockAlign = HAlign_Center;
+	switch (Slot.Appearance.TextAlignment)
+	{
+	case ESubtitleTextAlignment::Left:  BlockAlign = HAlign_Left;  break;
+	case ESubtitleTextAlignment::Right: BlockAlign = HAlign_Right; break;
+	default:                            BlockAlign = HAlign_Center; break;
+	}
+	Slot.SubtitleBorder->SetHAlign(BlockAlign);
 
 	Slot.SubtitleTextBlock->SetJustification(ETextJustify::Left);
 	if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetJustification(ETextJustify::Left);
@@ -765,84 +900,86 @@ void USubtitleSubsystem::ShowPersistentMessage(const FText& Text, ESubtitleEntra
 void USubtitleSubsystem::ShowMessageEx(const FText& Text, float Duration, const FSubtitleAppearance& Appearance,
 	const FText& SpeakerName)
 {
-	// Cancel any previous auto-hide timer for slot 0
-	if (TSharedPtr<FSubtitleSlot>* ExistingSlot = ActiveSlots.Find(0))
-	{
-		FSubtitleSlot& S = **ExistingSlot;
-		if (S.AutoHideTimerHandle.IsValid() && S.SubtitleBorder.IsValid())
-		{
-			S.SubtitleBorder->UnRegisterActiveTimer(S.AutoHideTimerHandle.ToSharedRef());
-			S.AutoHideTimerHandle.Reset();
-		}
-	}
-
 	NotifySubtitleStarted(0, Text, FLinearColor::White, Appearance, SpeakerName);
 
 	TSharedPtr<FSubtitleSlot>* SlotPtr = ActiveSlots.Find(0);
 	if (!SlotPtr || !SlotPtr->IsValid()) { return; }
 	FSubtitleSlot& Slot = **SlotPtr;
 
-	Slot.bIsShowMessageActive = true;
+	const float InDuration  = (Appearance.EntranceType != ESubtitleEntranceType::None)
+		? FMath::Max(Appearance.EntranceDuration, 0.f) : 0.f;
+	const float OutDuration = (Appearance.GetEffectiveExitType() != ESubtitleEntranceType::None)
+		? FMath::Max(Appearance.GetEffectiveExitDuration(), 0.f) : 0.f;
 
-	if (Duration > 0.0f)
-	{
-		Slot.AutoHideRemaining = Appearance.EntranceDuration + Duration;
+	// Driven by the subsystem's own clock. Same timing as before: entrance + Duration, then the exit.
+	Slot.bSelfClocked = true;
+	Slot.LocalTime    = 0.f;
+	Slot.Duration     = (Duration > 0.0f) ? InDuration + Duration + OutDuration : -1.f;
 
-		if (Slot.SubtitleBorder.IsValid())
-		{
-			Slot.AutoHideTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
-				0.0f,
-				FWidgetActiveTimerDelegate::CreateWeakLambda(this,
-					[this](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
-					{
-						return TickAutoHide(InCurrentTime, InDeltaTime);
-					}
-				)
-			);
-		}
-	}
+	ApplySubtitleVisual(Slot);
+	StartSelfClock();
 }
 
 void USubtitleSubsystem::HideMessage()
 {
 	TSharedPtr<FSubtitleSlot>* SlotPtr = ActiveSlots.Find(0);
-	if (!SlotPtr || !SlotPtr->IsValid()) { return; }
-
-	FSubtitleSlot& Slot = **SlotPtr;
-	if (!Slot.bIsShowMessageActive) { return; }
-
-	Slot.bIsShowMessageActive = false;
-
-	if (Slot.AutoHideTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
-	{
-		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AutoHideTimerHandle.ToSharedRef());
-		Slot.AutoHideTimerHandle.Reset();
-	}
+	if (!SlotPtr || !SlotPtr->IsValid() || !(*SlotPtr)->bSelfClocked) { return; }
 
 	NotifySubtitleEnded(0);
 }
 
-EActiveTimerReturnType USubtitleSubsystem::TickAutoHide(double InCurrentTime, float InDeltaTime)
+// ---------------------------------------------------------------------------
+// ShowMessage clock (real time; Sequencer subtitles use the sequence time instead)
+// ---------------------------------------------------------------------------
+
+void USubtitleSubsystem::StartSelfClock()
+{
+	if (SelfClockHandle.IsValid()) { return; }
+
+	SelfClockHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,
+		[this](float DeltaTime) -> bool
+		{
+			return TickSelfClock(DeltaTime);
+		}
+	));
+}
+
+void USubtitleSubsystem::StopSelfClock()
+{
+	if (SelfClockHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(SelfClockHandle);
+		SelfClockHandle.Reset();
+	}
+}
+
+bool USubtitleSubsystem::TickSelfClock(float DeltaTime)
 {
 	TSharedPtr<FSubtitleSlot>* SlotPtr = ActiveSlots.Find(0);
-	if (!SlotPtr || !SlotPtr->IsValid()) { return EActiveTimerReturnType::Stop; }
-
-	FSubtitleSlot& Slot = **SlotPtr;
-	if (!Slot.bIsShowMessageActive) { return EActiveTimerReturnType::Stop; }
-
-	Slot.AutoHideRemaining -= InDeltaTime;
-	if (Slot.AutoHideRemaining <= 0.0f)
+	if (!SlotPtr || !SlotPtr->IsValid() || !(*SlotPtr)->bSelfClocked)
 	{
-		Slot.bIsShowMessageActive = false;
-		NotifySubtitleEnded(0);
-		return EActiveTimerReturnType::Stop;
+		SelfClockHandle.Reset();
+		return false;
 	}
 
-	return EActiveTimerReturnType::Continue;
+	FSubtitleSlot& Slot = **SlotPtr;
+	Slot.LocalTime += DeltaTime;
+
+	// Exit finished: remove (returning false also removes this ticker)
+	if (Slot.Duration >= 0.f && Slot.LocalTime >= Slot.Duration)
+	{
+		SelfClockHandle.Reset();
+		Slot.bSelfClocked = false;
+		RemoveSlot(0);
+		return false;
+	}
+
+	ApplySubtitleVisual(Slot);
+	return true;
 }
 
 // ---------------------------------------------------------------------------
-// ShouldCreateSubsystem / Deinitialize
+// ShouldCreateSubsystem / Initialize / Deinitialize
 // ---------------------------------------------------------------------------
 
 bool USubtitleSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -850,24 +987,24 @@ bool USubtitleSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	return !IsRunningDedicatedServer();
 }
 
+void USubtitleSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	UserSettingsChangedHandle = USubtitleUserSettings::OnChanged().AddUObject(this, &USubtitleSubsystem::HandleUserSettingsChanged);
+}
+
 void USubtitleSubsystem::Deinitialize()
 {
-	// Clear all active slots (stops timers, releases Slate widgets)
-	for (auto& Pair : ActiveSlots)
-	{
-		FSubtitleSlot& Slot = *Pair.Value;
-		if (Slot.AnimTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
-		{
-			Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AnimTimerHandle.ToSharedRef());
-		}
-		if (Slot.AutoHideTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
-		{
-			Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AutoHideTimerHandle.ToSharedRef());
-		}
-		StopTremble(Slot);
-	}
+	USubtitleUserSettings::OnChanged().Remove(UserSettingsChangedHandle);
+	StopSelfClock();
+
+	// Release all subtitles and images (Slate widgets go with the overlay below)
 	ActiveSlots.Empty();
+	SubtitleGroups.Empty();
 	SlotSoundCache.Empty();
+	SlotWindowTextures.Empty();
+	SlotLineTextures.Empty();
 	ActiveImages.Empty();
 	ImageTextures.Empty();
 
@@ -877,12 +1014,82 @@ void USubtitleSubsystem::Deinitialize()
 #endif
 	DPIScalerWidget.Reset();
 	WidgetOverlay.Reset();
-	ContentVerticalBox.Reset();
 	ImageLayerBack.Reset();
 	ImageLayerFront.Reset();
-	OverlaySlot = nullptr;
 
 	Super::Deinitialize();
+}
+
+// ---------------------------------------------------------------------------
+// Player settings / display switches
+// ---------------------------------------------------------------------------
+
+bool USubtitleSubsystem::IsViewportDragAllowed() const
+{
+	return bIsEditorViewport && GetDefault<USubtitleSettings>()->bEnableViewportDrag;
+}
+
+bool USubtitleSubsystem::ShouldDisplaySlot(const FSubtitleSlot& Slot) const
+{
+	// ShowMessage (slot 0) is not affected by the player's subtitle switch
+	return Slot.bSelfClocked || Slot.SlotID == 0 || GetDefault<USubtitleUserSettings>()->AreSubtitlesShown();
+}
+
+FSubtitleAppearance USubtitleSubsystem::MakeEffectiveAppearance(const FSubtitleAppearance& InAppearance) const
+{
+	FSubtitleAppearance Result = InAppearance;
+	const USubtitleUserSettings* User = GetDefault<USubtitleUserSettings>();
+
+	// Text size (outlines scale with the text so they keep their look)
+	const float Scale = User->GetClampedTextScale();
+	if (!FMath::IsNearlyEqual(Scale, 1.f))
+	{
+		auto ScaleSize = [Scale](int32 Value) { return Value > 0 ? FMath::Max(1, FMath::RoundToInt(Value * Scale)) : Value; };
+		Result.FontSize            = ScaleSize(Result.FontSize);
+		Result.SpeakerNameFontSize = ScaleSize(Result.SpeakerNameFontSize);
+		Result.OutlineSize1        = ScaleSize(Result.OutlineSize1);
+		Result.OutlineSize2        = ScaleSize(Result.OutlineSize2);
+		Result.OutlineBlur1       *= Scale;
+		Result.OutlineBlur2       *= Scale;
+	}
+
+	// Background chosen by the player (works even if the author made the window transparent)
+	if (User->bOverrideBackgroundOpacity)
+	{
+		Result.BackgroundColor.A = 1.f;
+		Result.WindowOpacity     = FMath::Clamp(User->BackgroundOpacity, 0.f, 1.f);
+	}
+
+	return Result;
+}
+
+void USubtitleSubsystem::HandleUserSettingsChanged()
+{
+	for (auto& Pair : ActiveSlots)
+	{
+		if (!Pair.Value.IsValid()) { continue; }
+		FSubtitleSlot& Slot = *Pair.Value;
+
+		Slot.Appearance = MakeEffectiveAppearance(Slot.SourceAppearance);
+		if (!Slot.EntryVBox.IsValid()) { continue; }
+
+		ApplyAppearanceToSlot(Slot, Slot.Appearance);
+		ApplySpeakerAndSeparatorToSlot(Slot, Slot.Appearance, Slot.SpeakerName);
+		RebuildTypewriterSizer(Slot);
+
+		// Outline layers may have become visible: give them the current text
+		if (Slot.SubtitleTextBlock.IsValid()) Slot.SubtitleTextBlock->SetText(Slot.VisibleText);
+		if (Slot.InnerOutlineTextBlock.IsValid()) Slot.InnerOutlineTextBlock->SetText(Slot.VisibleText);
+		if (Slot.OuterOutlineTextBlock.IsValid()) Slot.OuterOutlineTextBlock->SetText(Slot.VisibleText);
+		for (int32 i = 0; i < FSubtitleSlot::NumBlurSteps; ++i)
+		{
+			if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetText(Slot.VisibleText);
+			if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetText(Slot.VisibleText);
+		}
+
+		ApplySubtitleVisual(Slot);
+	}
+	UpdateOverlayVisibility();
 }
 
 // ---------------------------------------------------------------------------
@@ -939,7 +1146,8 @@ void USubtitleSubsystem::OnSlotDragOffsetChanged(uint32 SlotID, FVector2D NewOff
 	// Update slot state
 	if (TSharedPtr<FSubtitleSlot>* Found = ActiveSlots.Find(SlotID))
 	{
-		(*Found)->Appearance.ScreenOffset = NewOffset;
+		(*Found)->SourceAppearance.ScreenOffset = NewOffset;
+		(*Found)->Appearance.ScreenOffset       = NewOffset;
 	}
 
 	// Keep BP-compat CurrentAppearance in sync with the last dragged slot
@@ -1203,38 +1411,11 @@ namespace
 } // namespace
 
 // ---------------------------------------------------------------------------
-// ApplyOverlayPosition — global overlay slot (shared by all slots)
-// ---------------------------------------------------------------------------
-
-void USubtitleSubsystem::ApplyOverlayPosition(const FSubtitleAppearance& InAppearance)
-{
-	if (!OverlaySlot) { return; }
-
-	switch (InAppearance.VerticalPosition)
-	{
-	case ESubtitleVerticalPosition::Top:    OverlaySlot->SetVerticalAlignment(VAlign_Top);    break;
-	case ESubtitleVerticalPosition::Center: OverlaySlot->SetVerticalAlignment(VAlign_Center); break;
-	default:                                OverlaySlot->SetVerticalAlignment(VAlign_Bottom);  break;
-	}
-
-	switch (InAppearance.HorizontalPosition)
-	{
-	case ESubtitleHorizontalPosition::Left:  OverlaySlot->SetHorizontalAlignment(HAlign_Left);  break;
-	case ESubtitleHorizontalPosition::Right: OverlaySlot->SetHorizontalAlignment(HAlign_Right); break;
-	default:                                 OverlaySlot->SetHorizontalAlignment(HAlign_Fill);  break;
-	}
-
-	OverlaySlot->SetPadding(InAppearance.ScreenPadding);
-}
-
-// ---------------------------------------------------------------------------
 // ApplyAppearanceToSlot
 // ---------------------------------------------------------------------------
 
 void USubtitleSubsystem::ApplyAppearanceToSlot(FSubtitleSlot& Slot, const FSubtitleAppearance& InAppearance)
 {
-	ApplyOverlayPosition(InAppearance);
-
 	// Per-slot screen offset — applied to AnimWrapper so it doesn't interfere with animation transforms
 #if WITH_EDITOR
 	if (Slot.DragHandle.IsValid())
@@ -1255,6 +1436,11 @@ void USubtitleSubsystem::ApplyAppearanceToSlot(FSubtitleSlot& Slot, const FSubti
 #endif
 
 	ApplyWindowBackground(Slot, InAppearance);
+
+	// Keep the window image alive while Slate draws it (FSlateBrush holds no GC reference)
+	UTexture2D* WindowTexture = (InAppearance.WindowStyle == EMessageWindowStyle::Image) ? InAppearance.WindowImage.Get() : nullptr;
+	if (WindowTexture) { SlotWindowTextures.Add(Slot.SlotID, WindowTexture); }
+	else               { SlotWindowTextures.Remove(Slot.SlotID); }
 
 	// MessageWindowHeight is a minimum: the window still grows to fit larger text or more lines
 	if (Slot.MessageWindowBox.IsValid())
@@ -1465,249 +1651,122 @@ void USubtitleSubsystem::ApplySpeakerAndSeparatorToSlot(FSubtitleSlot& Slot,
 	}
 
 	ApplyNameAndSeparatorAlignment(Slot, InAppearance);
+
+	// Keep the separator image alive while Slate draws it
+	UTexture2D* LineTexture = (bHasSpeaker && InAppearance.bShowSeparatorLine && InAppearance.bUseLineImage)
+		? InAppearance.LineImage.Get() : nullptr;
+	if (LineTexture) { SlotLineTextures.Add(Slot.SlotID, LineTexture); }
+	else             { SlotLineTextures.Remove(Slot.SlotID); }
 }
 
 // ---------------------------------------------------------------------------
-// StartSlotAnimation / ApplySlotAnimationAlpha / TickSlotAnimation
+// ApplySubtitleVisual — entrance / exit / tremble from the slot's clock
 // ---------------------------------------------------------------------------
 
-void USubtitleSubsystem::StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID,
-	ESubtitleEntranceType InType, float InDuration, bool bReverse)
+void USubtitleSubsystem::ApplySubtitleVisual(FSubtitleSlot& Slot)
 {
 	if (!Slot.SubtitleBorder.IsValid()) { return; }
 
-	Slot.SubtitleBorder->SetRenderOpacity(1.0f);
-	Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform());
-	if (Slot.SpeakerTextOverlay.IsValid()) { Slot.SpeakerTextOverlay->SetRenderOpacity(1.0f); Slot.SpeakerTextOverlay->SetRenderTransform(FSlateRenderTransform()); }
-	if (Slot.SeparatorBox.IsValid())       { Slot.SeparatorBox->SetRenderOpacity(1.0f);       Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
+#if WITH_EDITOR
+	const bool bHasDragHandle = Slot.DragHandle.IsValid();
+	const bool bDragging      = bHasDragHandle && Slot.DragHandle->IsDragging();
+#else
+	const bool bHasDragHandle = false;
+	const bool bDragging      = false;
+#endif
 
-	if (InType == ESubtitleEntranceType::None || InDuration <= 0.0f)
+	// --- Shown / hidden (player setting) and whether it can be dragged ---
+	if (Slot.RootWidget.IsValid())
 	{
-		Slot.bAnimating = false;
-		if (bReverse)
+		EVisibility RootVisibility = EVisibility::Collapsed;
+		if (ShouldDisplaySlot(Slot))
 		{
-			// Exit with no animation — remove immediately
-			RemoveSlotWidget(SlotID);
+			RootVisibility = (bHasDragHandle && IsViewportDragAllowed()) ? EVisibility::Visible : EVisibility::HitTestInvisible;
 		}
-		return;
+		Slot.RootWidget->SetVisibility(RootVisibility);
 	}
 
-	Slot.AnimType     = InType;
-	Slot.AnimDuration = InDuration;
-	Slot.AnimElapsed  = 0.f;
-	Slot.bAnimating   = true;
-	Slot.bExitAnim    = bReverse;
+	const FSubtitleAppearance& A = Slot.Appearance;
+	const float T   = Slot.LocalTime;
+	const float Dur = Slot.Duration;
+	const bool  bKnownEnd = Dur > 0.f; // 0 = not known yet, < 0 = until HideMessage
 
-	// Viewport-relative slide offsets in Slate units (fallback when the viewport size is unknown)
-	const FVector2D ViewportSize = GetViewportSlateSize();
-	Slot.SlideOffsetX = ViewportSize.X > 0.0 ? static_cast<float>(ViewportSize.X) : 2000.f;
-	Slot.SlideOffsetY = ViewportSize.Y > 0.0 ? static_cast<float>(ViewportSize.Y) : 1200.f;
-
-	ApplySlotAnimationAlpha(Slot, bReverse ? 1.0f : 0.0f);
-
-	// Stop any previous animation timer for this slot
-	if (Slot.AnimTimerHandle.IsValid())
+	// --- Entrance / exit: the exit finishes at the end ---
+	const ESubtitleEntranceType ExitType = A.GetEffectiveExitType();
+	float InDuration  = (A.EntranceType != ESubtitleEntranceType::None) ? FMath::Max(A.EntranceDuration, 0.f) : 0.f;
+	float OutDuration = (ExitType != ESubtitleEntranceType::None) ? FMath::Max(A.GetEffectiveExitDuration(), 0.f) : 0.f;
+	if (!Slot.bSelfClocked && bKnownEnd && InDuration + OutDuration > Dur)
 	{
-		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AnimTimerHandle.ToSharedRef());
-		Slot.AnimTimerHandle.Reset();
+		// Section too short for both: shorten them proportionally
+		const float Ratio = Dur / (InDuration + OutDuration);
+		InDuration  *= Ratio;
+		OutDuration *= Ratio;
 	}
 
-	Slot.AnimTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
-		0.0f,
-		FWidgetActiveTimerDelegate::CreateWeakLambda(this,
-			[this, SlotID](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
-			{
-				return TickSlotAnimation(SlotID, InCurrentTime, InDeltaTime);
-			}
-		)
-	);
-}
+	// Same easing as before (ease-out, exponent 2); the exit is the entrance played backwards
+	const float InAlpha = (InDuration > 0.f && T < InDuration)
+		? FMath::InterpEaseOut(0.f, 1.f, T / InDuration, 2.f)
+		: 1.f;
+	const float OutAlpha = (bKnownEnd && OutDuration > 0.f && T > Dur - OutDuration)
+		? FMath::InterpEaseOut(0.f, 1.f, FMath::Clamp((Dur - T) / OutDuration, 0.f, 1.f), 2.f)
+		: 1.f;
 
-void USubtitleSubsystem::ApplySlotAnimationAlpha(FSubtitleSlot& Slot, float EasedAlpha)
-{
-	if (!Slot.SubtitleBorder.IsValid()) { return; }
+	ESubtitleEntranceType AnimType = ESubtitleEntranceType::None;
+	float Alpha = 1.f;
+	if (OutAlpha < InAlpha)  { AnimType = ExitType;       Alpha = OutAlpha; }
+	else if (InAlpha < 1.f)  { AnimType = A.EntranceType; Alpha = InAlpha; }
 
-	// Apply opacity to every visible component simultaneously
-	auto SetOpacityAll = [&](float O)
+	// Slides start from outside the screen (viewport size in Slate units)
+	FVector2D ViewportSize = GetViewportSlateSize();
+	if (ViewportSize.X <= 0.0 || ViewportSize.Y <= 0.0)
 	{
-		Slot.SubtitleBorder->SetRenderOpacity(O);
-		if (Slot.SpeakerTextOverlay.IsValid()) Slot.SpeakerTextOverlay->SetRenderOpacity(O);
-		if (Slot.SeparatorBox.IsValid())       Slot.SeparatorBox->SetRenderOpacity(O);
-	};
-
-	// Apply the same render transform to every visible component
-	auto SetTransformAll = [&](const FSlateRenderTransform& T)
-	{
-		Slot.SubtitleBorder->SetRenderTransform(T);
-		if (Slot.SpeakerTextOverlay.IsValid()) Slot.SpeakerTextOverlay->SetRenderTransform(T);
-		if (Slot.SeparatorBox.IsValid())       Slot.SeparatorBox->SetRenderTransform(T);
-	};
-
-	// For scale effects, apply via EntryVBox so the whole group scales from one pivot.
-	// EntryVBox RenderTransform = Scale(pivot=center) combined with ScreenOffset translation.
-	auto SetScaleAll = [&](const FScale2D& Scale)
-	{
-		if (Slot.EntryVBox.IsValid())
-		{
-			Slot.EntryVBox->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
-			Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(Scale, Slot.Appearance.ScreenOffset));
-		}
-	};
-
-	switch (Slot.AnimType)
-	{
-	case ESubtitleEntranceType::FadeIn:
-		SetOpacityAll(EasedAlpha);
-		break;
-	case ESubtitleEntranceType::SlideLeft:
-		SetTransformAll(FSlateRenderTransform(FVector2D(-Slot.SlideOffsetX * (1.f - EasedAlpha), 0.f)));
-		break;
-	case ESubtitleEntranceType::SlideRight:
-		SetTransformAll(FSlateRenderTransform(FVector2D(Slot.SlideOffsetX * (1.f - EasedAlpha), 0.f)));
-		break;
-	case ESubtitleEntranceType::SlideTop:
-		SetTransformAll(FSlateRenderTransform(FVector2D(0.f, -Slot.SlideOffsetY * (1.f - EasedAlpha))));
-		break;
-	case ESubtitleEntranceType::SlideBottom:
-		SetTransformAll(FSlateRenderTransform(FVector2D(0.f, Slot.SlideOffsetY * (1.f - EasedAlpha))));
-		break;
-	case ESubtitleEntranceType::ScaleVertical:
-		SetScaleAll(FScale2D(1.0f, EasedAlpha));
-		break;
-	case ESubtitleEntranceType::ScaleUp:
-		SetScaleAll(FScale2D(EasedAlpha, EasedAlpha));
-		break;
-	default:
-		break;
-	}
-}
-
-EActiveTimerReturnType USubtitleSubsystem::TickSlotAnimation(uint32 SlotID, double InCurrentTime, float InDeltaTime)
-{
-	TSharedPtr<FSubtitleSlot>* Found = ActiveSlots.Find(SlotID);
-	if (!Found || !Found->IsValid()) { return EActiveTimerReturnType::Stop; }
-
-	FSubtitleSlot& Slot = **Found;
-
-	if (!Slot.bAnimating || !Slot.SubtitleBorder.IsValid())
-	{
-		return EActiveTimerReturnType::Stop;
+		ViewportSize = FVector2D(2000.0, 1200.0);
 	}
 
-	Slot.AnimElapsed += InDeltaTime;
-	const float Alpha = FMath::Clamp(Slot.AnimElapsed / Slot.AnimDuration, 0.0f, 1.0f);
-	const float DirectionalAlpha = Slot.bExitAnim ? (1.0f - Alpha) : Alpha;
-
-	float EasedAlpha;
-	EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, DirectionalAlpha, 2.0f);
-
-	ApplySlotAnimationAlpha(Slot, EasedAlpha);
-
-	if (Alpha >= 1.0f)
+	float     Opacity = 1.f;
+	FVector2D Offset  = FVector2D::ZeroVector;
+	FScale2D  Scale(1.f, 1.f);
+	switch (AnimType)
 	{
-		// Exit animation: remove slot BEFORE touching any slot state (slot is destroyed by RemoveSlotWidget)
-		if (Slot.bExitAnim)
-		{
-			RemoveSlotWidget(SlotID);
-			return EActiveTimerReturnType::Stop;
-		}
-		// Entrance animation complete: restore clean render state
-		Slot.bAnimating = false;
-		Slot.SubtitleBorder->SetRenderOpacity(1.0f);
-		Slot.SubtitleBorder->SetRenderTransform(FSlateRenderTransform());
-		if (Slot.SpeakerTextOverlay.IsValid()) { Slot.SpeakerTextOverlay->SetRenderOpacity(1.0f); Slot.SpeakerTextOverlay->SetRenderTransform(FSlateRenderTransform()); }
-		if (Slot.SeparatorBox.IsValid())       { Slot.SeparatorBox->SetRenderOpacity(1.0f);       Slot.SeparatorBox->SetRenderTransform(FSlateRenderTransform()); }
-		if (Slot.EntryVBox.IsValid())        { Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(Slot.Appearance.ScreenOffset)); }
-		return EActiveTimerReturnType::Stop;
+	case ESubtitleEntranceType::FadeIn:        Opacity  = Alpha;                              break;
+	case ESubtitleEntranceType::SlideLeft:     Offset.X = -ViewportSize.X * (1.f - Alpha);   break;
+	case ESubtitleEntranceType::SlideRight:    Offset.X =  ViewportSize.X * (1.f - Alpha);   break;
+	case ESubtitleEntranceType::SlideTop:      Offset.Y = -ViewportSize.Y * (1.f - Alpha);   break;
+	case ESubtitleEntranceType::SlideBottom:   Offset.Y =  ViewportSize.Y * (1.f - Alpha);   break;
+	case ESubtitleEntranceType::ScaleVertical: Scale    = FScale2D(1.f, Alpha);               break;
+	case ESubtitleEntranceType::ScaleUp:       Scale    = FScale2D(Alpha, Alpha);             break;
+	default: break;
 	}
 
-	return EActiveTimerReturnType::Continue;
-}
-
-// ---------------------------------------------------------------------------
-// StartTremble / StopTremble / TickTremble — continuous shake effect
-// ---------------------------------------------------------------------------
-
-void USubtitleSubsystem::StartTremble(FSubtitleSlot& Slot, uint32 SlotID)
-{
-	StopTremble(Slot);
-
-	if (!Slot.Appearance.bTremble || !Slot.SubtitleBorder.IsValid())
+	// --- Tremble on the same clock (sin / cos with slightly different frequencies) ---
+	if (A.bTremble)
 	{
-		return;
+		const float Phase = T * A.TrembleSpeed * UE_TWO_PI;
+		Offset += FVector2D(FMath::Sin(Phase), FMath::Cos(Phase * 1.3f)) * A.TrembleIntensity;
 	}
 
-	Slot.TrembleStartTime = FPlatformTime::Seconds();
-
-	Slot.TrembleTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
-		0.0f,
-		FWidgetActiveTimerDelegate::CreateWeakLambda(this,
-			[this, SlotID](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
-			{
-				return TickTremble(SlotID, InCurrentTime, InDeltaTime);
-			}
-		)
-	);
-}
-
-void USubtitleSubsystem::StopTremble(FSubtitleSlot& Slot)
-{
-	if (Slot.TrembleTimerHandle.IsValid() && Slot.SubtitleBorder.IsValid())
+	// Fade / slide / tremble act on each visible part
+	const FSlateRenderTransform PartTransform(FVector2f(Offset));
+	Slot.SubtitleBorder->SetRenderOpacity(Opacity);
+	Slot.SubtitleBorder->SetRenderTransform(PartTransform);
+	if (Slot.SpeakerTextOverlay.IsValid())
 	{
-		Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.TrembleTimerHandle.ToSharedRef());
-		Slot.TrembleTimerHandle.Reset();
+		Slot.SpeakerTextOverlay->SetRenderOpacity(Opacity);
+		Slot.SpeakerTextOverlay->SetRenderTransform(PartTransform);
 	}
-}
-
-EActiveTimerReturnType USubtitleSubsystem::TickTremble(uint32 SlotID, double InCurrentTime, float InDeltaTime)
-{
-	TSharedPtr<FSubtitleSlot>* Found = ActiveSlots.Find(SlotID);
-	if (!Found || !Found->IsValid()) { return EActiveTimerReturnType::Stop; }
-
-	FSubtitleSlot& Slot = **Found;
-
-	if (!Slot.Appearance.bTremble || !Slot.SubtitleBorder.IsValid())
+	if (Slot.SeparatorBox.IsValid())
 	{
-		return EActiveTimerReturnType::Stop;
+		Slot.SeparatorBox->SetRenderOpacity(Opacity);
+		Slot.SeparatorBox->SetRenderTransform(PartTransform);
 	}
 
-	const double Elapsed = FPlatformTime::Seconds() - Slot.TrembleStartTime;
-	const float Speed = Slot.Appearance.TrembleSpeed;
-	const float Intensity = Slot.Appearance.TrembleIntensity;
-
-	// Use sin/cos with slightly different frequencies for organic-feeling shake
-	const float OffsetX = FMath::Sin(static_cast<float>(Elapsed) * Speed * UE_TWO_PI) * Intensity;
-	const float OffsetY = FMath::Cos(static_cast<float>(Elapsed) * Speed * UE_TWO_PI * 1.3f) * Intensity;
-
-	const FVector2D TrembleOffset(OffsetX, OffsetY);
-
-	// During Slide entrance/exit, add tremble on top of the current slide offset.
-	// During Scale or Fade animations (or no animation), just apply tremble alone.
-	FVector2D BaseOffset = FVector2D::ZeroVector;
-	if (Slot.bAnimating)
+	// Scale acts on the whole entry around its center, combined with the screen offset
+	// (while dragging, the drag handle moves the entry itself)
+	if (Slot.EntryVBox.IsValid() && !bDragging)
 	{
-		// Reconstruct the current slide offset from animation state (same easing as TickSlotAnimation)
-		const float Alpha = FMath::Clamp(Slot.AnimElapsed / Slot.AnimDuration, 0.0f, 1.0f);
-		const float DirectionalAlpha = Slot.bExitAnim ? (1.0f - Alpha) : Alpha;
-		const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, DirectionalAlpha, 2.0f);
-		switch (Slot.AnimType)
-		{
-		case ESubtitleEntranceType::SlideLeft:   BaseOffset.X = -Slot.SlideOffsetX * (1.f - EasedAlpha); break;
-		case ESubtitleEntranceType::SlideRight:  BaseOffset.X =  Slot.SlideOffsetX * (1.f - EasedAlpha); break;
-		case ESubtitleEntranceType::SlideTop:    BaseOffset.Y = -Slot.SlideOffsetY * (1.f - EasedAlpha); break;
-		case ESubtitleEntranceType::SlideBottom: BaseOffset.Y =  Slot.SlideOffsetY * (1.f - EasedAlpha); break;
-		default: break;
-		}
+		Slot.EntryVBox->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		Slot.EntryVBox->SetRenderTransform(FSlateRenderTransform(Scale, FVector2f(A.ScreenOffset)));
 	}
-
-	const FSlateRenderTransform CombinedTransform(BaseOffset + TrembleOffset);
-
-	// Apply to individual components (not EntryVBox) to avoid conflicting with Scale animations
-	Slot.SubtitleBorder->SetRenderTransform(CombinedTransform);
-	if (Slot.SpeakerTextOverlay.IsValid()) { Slot.SpeakerTextOverlay->SetRenderTransform(CombinedTransform); }
-	if (Slot.SeparatorBox.IsValid())       { Slot.SeparatorBox->SetRenderTransform(CombinedTransform); }
-
-	return EActiveTimerReturnType::Continue;
 }
 
 // ---------------------------------------------------------------------------

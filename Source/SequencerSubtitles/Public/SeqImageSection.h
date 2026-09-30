@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "MovieSceneSection.h"
+#include "Channels/MovieSceneFloatChannel.h"
 #include "SeqImageTypes.h"
 #include "SeqImageSection.generated.h"
 
@@ -39,6 +40,31 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motion", meta = (ShowOnlyInnerProperties))
 	FSeqImageMotion Motion;
 
+	// ---- Keyframes (combined with the settings above) ----
+
+	/** Added to the offset (pixels). */
+	UPROPERTY()
+	FMovieSceneFloatChannel OffsetXCurve;
+
+	/** Added to the offset (pixels). */
+	UPROPERTY()
+	FMovieSceneFloatChannel OffsetYCurve;
+
+	/** Multiplies the scale. */
+	UPROPERTY()
+	FMovieSceneFloatChannel ScaleCurve;
+
+	/** Added to the rotation (degrees). */
+	UPROPERTY()
+	FMovieSceneFloatChannel RotationCurve;
+
+	/** Multiplies the opacity. */
+	UPROPERTY()
+	FMovieSceneFloatChannel OpacityCurve;
+
 	/** Collect the display settings for evaluation. */
 	FSeqImageParams MakeParams() const;
+
+protected:
+	virtual EMovieSceneChannelProxyType CacheChannelProxy() override;
 };

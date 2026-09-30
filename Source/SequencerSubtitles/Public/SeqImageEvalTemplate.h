@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Evaluation/MovieSceneEvalTemplate.h"
+#include "Channels/MovieSceneFloatChannel.h"
 #include "SeqImageTypes.h"
 #include "SeqImageEvalTemplate.generated.h"
 
@@ -29,6 +30,22 @@ struct SEQUENCERSUBTITLES_API FSeqImageEvalTemplate : public FMovieSceneEvalTemp
 
 	UPROPERTY()
 	FFrameRate TickResolution = FFrameRate(24000, 1);
+
+	// Keyframe channels (copied from the section; evaluated in sequence time)
+	UPROPERTY()
+	FMovieSceneFloatChannel OffsetXCurve;
+
+	UPROPERTY()
+	FMovieSceneFloatChannel OffsetYCurve;
+
+	UPROPERTY()
+	FMovieSceneFloatChannel ScaleCurve;
+
+	UPROPERTY()
+	FMovieSceneFloatChannel RotationCurve;
+
+	UPROPERTY()
+	FMovieSceneFloatChannel OpacityCurve;
 
 	/** Unique ID of the source section — used as the image slot key. */
 	UPROPERTY()

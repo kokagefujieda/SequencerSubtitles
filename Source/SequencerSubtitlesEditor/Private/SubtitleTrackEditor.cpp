@@ -508,10 +508,18 @@ void FSubtitleTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
 	const float DefaultDuration = Settings ? Settings->DefaultSectionDuration : 3.0f;
 	const float MaxDuration = Settings ? Settings->MaxDefaultSectionDuration : 5.0f;
 
-	// Get clipboard text for paste-on-add feature
+	// Get clipboard text for paste-on-add feature (can be turned off; long text is ignored)
 	FString ClipboardText;
-	FPlatformApplicationMisc::ClipboardPaste(ClipboardText);
-	const FString TrimmedClipboard = ClipboardText.TrimStartAndEnd();
+	if (!Settings || Settings->bPasteClipboardOnAddSection)
+	{
+		FPlatformApplicationMisc::ClipboardPaste(ClipboardText);
+	}
+	FString TrimmedClipboard = ClipboardText.TrimStartAndEnd();
+	const int32 MaxPasteChars = Settings ? Settings->ClipboardPasteMaxChars : 300;
+	if (MaxPasteChars > 0 && TrimmedClipboard.Len() > MaxPasteChars)
+	{
+		TrimmedClipboard.Empty();
+	}
 
 	// Find the nearest section that starts after CurrentTime on this track
 	FFrameNumber NearestNextStart = TNumericLimits<int32>::Max();

@@ -328,3 +328,16 @@ struct SEQUENCERSUBTITLES_API FSeqImageParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Image")
 	FSeqImageMotion Motion;
 };
+
+/** Values of the keyframe channels of an image section at the current time (combined with the layout). */
+struct FSeqImageKeyedValues
+{
+	/** Added to the offset. */
+	FVector2D Offset   = FVector2D::ZeroVector;
+	/** Multiplies the scale. */
+	float     Scale    = 1.0f;
+	/** Added to the rotation (degrees). */
+	float     Rotation = 0.0f;
+	/** Multiplies the opacity. */
+	float     Opacity  = 1.0f;
+};

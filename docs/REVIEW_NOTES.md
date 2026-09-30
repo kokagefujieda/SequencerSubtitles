@@ -185,5 +185,9 @@
 - 対応プラットフォーム: 今は Win64 のみ。プラットフォーム固有のコードはないので、Mac / Linux を加えられる可能性がある（要確認）。
 - 配布用の zip から `CLAUDE.md` と `docs/` を除外する。
 
+## 対応状況
+- F1〜F7、A1、A3 は v1.4 で対応した（docs/V1_4_PLAN.md）。
+- A2、A4〜A7 は未着手。
+
 ## 互換性の確認
 - CinematicADV は Build.cs で依存しているだけで、SequencerSubtitles の API をコードから使っていない。今回の変更で CinematicADV のビルドが壊れることはない。

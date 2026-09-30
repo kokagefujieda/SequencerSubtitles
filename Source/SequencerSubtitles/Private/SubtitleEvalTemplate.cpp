@@ -21,6 +21,9 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 	/** -1 = show full text; >= 0 = typewriter: show this many characters. */
 	int32         VisibleCharCount = -1;
 	uint32        SlotID           = 0;
+	/** Seconds since the section start, and the section length (entrance / exit / tremble use them). */
+	float         LocalTime        = 0.f;
+	float         Duration         = 0.f;
 #if WITH_EDITOR
 	TWeakObjectPtr<UMovieSceneSeqSubtitleSection> SourceSection;
 #endif
@@ -47,24 +50,30 @@ struct FSubtitleExecutionToken : IMovieSceneExecutionToken
 		USubtitleSubsystem* Subsystem = World->GetSubsystem<USubtitleSubsystem>();
 		if (!Subsystem) { return; }
 
-#if WITH_EDITOR
-		Subsystem->SetActiveSection(SlotID, SourceSection.Get());
-#endif
-
-		// Already showing this slot — just update typewriter progress if needed
-		if (Subsystem->IsSlotActive(SlotID))
+		// Outside the section (e.g. nearest-section evaluation in a gap): nothing to show
+		if (Duration <= 0.f || LocalTime < 0.f || LocalTime >= Duration)
 		{
-			if (VisibleCharCount >= 0)
+			if (Subsystem->IsSlotActive(SlotID))
 			{
-				Subsystem->UpdateTypewriterProgress(SlotID, VisibleCharCount);
+				Subsystem->NotifySubtitleEnded(SlotID);
 			}
 			return;
 		}
 
-		// New subtitle — start it
-		Subsystem->NotifySubtitleStarted(SlotID, SubtitleText, Color, Appearance, SpeakerName);
+#if WITH_EDITOR
+		Subsystem->SetActiveSection(SlotID, SourceSection.Get());
+#endif
 
-		// For typewriter: override initial display immediately (before Slate renders)
+		// New subtitle — start it
+		if (!Subsystem->IsSlotActive(SlotID))
+		{
+			Subsystem->NotifySubtitleStarted(SlotID, SubtitleText, Color, Appearance, SpeakerName);
+		}
+
+		// Entrance / exit / tremble follow the sequence time (scrubbing and Movie Render Queue match playback)
+		Subsystem->UpdateSubtitleTime(SlotID, LocalTime, Duration);
+
+		// Typewriter progress (before Slate renders)
 		if (VisibleCharCount >= 0)
 		{
 			Subsystem->UpdateTypewriterProgress(SlotID, VisibleCharCount);
@@ -147,19 +156,20 @@ FSubtitleEvalTemplate::FSubtitleEvalTemplate(const UMovieSceneSeqSubtitleSection
 	SourceSection = const_cast<UMovieSceneSeqSubtitleSection*>(&InSection);
 #endif
 
+	// Section range and tick resolution (used for the animation clock and the typewriter)
+	const TRange<FFrameNumber>& Range = InSection.GetRange();
+	if (Range.HasLowerBound()) { TypewriterSectionStart = Range.GetLowerBoundValue(); }
+	if (Range.HasUpperBound()) { TypewriterSectionEnd   = Range.GetUpperBoundValue(); }
+
+	if (const UMovieScene* MovieScene = InSection.GetTypedOuter<UMovieScene>())
+	{
+		TypewriterTickResolution = MovieScene->GetTickResolution();
+	}
+
 	bTypewriterEffect = InSection.bTypewriterEffect;
 	if (bTypewriterEffect)
 	{
-		const TRange<FFrameNumber>& Range = InSection.GetRange();
-		if (Range.HasLowerBound()) { TypewriterSectionStart = Range.GetLowerBoundValue(); }
-		if (Range.HasUpperBound()) { TypewriterSectionEnd   = Range.GetUpperBoundValue(); }
-
 		TypewriterCharInterval = FMath::Max(InSection.TypewriterCharInterval, 0.01f);
-
-		if (const UMovieScene* MovieScene = InSection.GetTypedOuter<UMovieScene>())
-		{
-			TypewriterTickResolution = MovieScene->GetTickResolution();
-		}
 	}
 
 	SlotID = InSection.GetUniqueID();
@@ -205,11 +215,13 @@ void FSubtitleEvalTemplate::Evaluate(
 			const float  ElapsedSec  = (TicksPerSec > 0.0) ? (float)(Elapsed / TicksPerSec) : 0.f;
 			const int32  ByInterval  = FMath::FloorToInt(ElapsedSec / TypewriterCharInterval);
 
-			// Section-forced: ensures all chars show by the last evaluated frame.
-			// The range is [Start, End) (exclusive upper), so the last frame has
-			// Elapsed = SectionDuration - 1. Use (SectionDuration - 1) as the
-			// denominator so Progress reaches 1.0 on that frame.
-			const int32  EffectiveDuration = FMath::Max(SectionDuration - 1, 1);
+			// Section-forced: ensures all chars show before the exit animation starts
+			// (the exit plays at the end of the section). The range is [Start, End)
+			// (exclusive upper), so the last frame has Elapsed = SectionDuration - 1.
+			const float  ExitSec = (Appearance.GetEffectiveExitType() != ESubtitleEntranceType::None)
+				? FMath::Max(Appearance.GetEffectiveExitDuration(), 0.f) : 0.f;
+			const int32  TypingDuration    = FMath::Max(SectionDuration - FMath::RoundToInt(ExitSec * TicksPerSec), 1);
+			const int32  EffectiveDuration = FMath::Max(TypingDuration - 1, 1);
 			const float  Progress    = FMath::Clamp((float)Elapsed / EffectiveDuration, 0.0f, 1.0f);
 			const int32  BySection   = FMath::CeilToInt(Progress * TotalChars);
 
@@ -219,6 +231,15 @@ void FSubtitleEvalTemplate::Evaluate(
 	}
 
 	FSubtitleExecutionToken Token(SpeakerName, SubtitleText, BarColor, Appearance, VisibleCharCount, SlotID);
+
+	// Sub-frame accurate section-local time
+	const double TicksPerSec = TypewriterTickResolution.AsDecimal();
+	if (TicksPerSec > 0.0)
+	{
+		const FFrameTime LocalTicks = Context.GetTime() - FFrameTime(TypewriterSectionStart);
+		Token.LocalTime = static_cast<float>(LocalTicks.AsDecimal() / TicksPerSec);
+		Token.Duration  = static_cast<float>((TypewriterSectionEnd - TypewriterSectionStart).Value / TicksPerSec);
+	}
 #if WITH_EDITOR
 	Token.SourceSection = SourceSection;
 #endif

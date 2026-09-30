@@ -31,6 +31,7 @@ struct SEQUENCERSUBTITLES_API FSubtitleEvalTemplate : public FMovieSceneEvalTemp
 	UPROPERTY()
 	bool bTypewriterEffect = false;
 
+	/** Section range (used for the animation clock and the typewriter; the names are kept for compatibility). */
 	UPROPERTY()
 	FFrameNumber TypewriterSectionStart;
 

@@ -10,6 +10,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Styling/SlateBrush.h"
 #include "Fonts/SlateFontInfo.h"
+#include "Containers/Ticker.h"
 #include "SubtitleSubsystem.generated.h"
 
 class STextBlock;
@@ -37,13 +38,32 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSubtitleEnded);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSubtitlePageAdvanced, int32, NewPageIndex);
 
+/** A subtitle started. SlotID identifies it until OnSubtitleSlotEnded (0 = ShowMessage). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
+	FOnSubtitleSlotStarted,
+	int32, SlotID,
+	const FText&, SubtitleText,
+	const FText&, SpeakerName,
+	const FSubtitleAppearance&, Appearance
+);
+
+/** The visible text of a subtitle changed (typewriter progress). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSubtitleSlotTextChanged, int32, SlotID, const FText&, VisibleText);
+
+/** A subtitle was removed. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSubtitleSlotEnded, int32, SlotID);
+
 /**
  * Per-slot widget set and state for one simultaneously active subtitle.
  * One instance is created per active sequencer section (keyed by section UniqueID).
  */
 struct FSubtitleSlot
 {
-	// --- Slate widgets for this entry ---
+	uint32                             SlotID = 0;
+
+	// --- Slate widgets for this entry (none when the built-in display is off) ---
+	/** Widget added to the position group: the drag handle in the editor viewport, otherwise EntryVBox. */
+	TSharedPtr<SWidget>                RootWidget;
 	TSharedPtr<SVerticalBox>           EntryVBox;
 	TSharedPtr<STextBlock>             SpeakerTextBlock;
 	TSharedPtr<SBox>                   SeparatorBox;
@@ -77,7 +97,14 @@ struct FSubtitleSlot
 	TSharedPtr<STextBlock>             SpeakerInnerBlurTextBlocks[NumBlurSteps];
 	TSharedPtr<STextBlock>             SpeakerInnerOutlineTextBlock;
 
+	// --- Position group (slots with the same position share one) ---
+	FString                            GroupKey;
+	bool                               bInGroup = false;
+
 	// --- Subtitle state ---
+	/** Appearance as authored (track / section / ShowMessage). */
+	FSubtitleAppearance                SourceAppearance;
+	/** SourceAppearance with the player settings (text scale, background opacity) applied. */
 	FSubtitleAppearance                Appearance;
 	FText                              Text;
 	FText                              SpeakerName;
@@ -91,26 +118,18 @@ struct FSubtitleSlot
 	bool                               bTypewriterActive    = false;
 	int32                              LastSoundCharIndex   = -1;
 	double                             LastSoundPlayTime    = 0.0;
+	/** Visible character count last reported through OnSubtitleSlotTextChanged. */
+	int32                              LastVisibleCharCount = -1;
+	/** Text currently shown (full text, or the typewriter part). */
+	FText                              VisibleText;
 
-	// --- Animation state ---
-	bool                               bAnimating    = false;
-	bool                               bExitAnim     = false;
-	bool                               bPendingRemoval = false;
-	float                              AnimElapsed   = 0.f;
-	float                              AnimDuration  = 0.3f;
-	ESubtitleEntranceType              AnimType      = ESubtitleEntranceType::None;
-	TSharedPtr<FActiveTimerHandle>     AnimTimerHandle;
-	float                              SlideOffsetX  = 2000.f;
-	float                              SlideOffsetY  = 1200.f;
-
-	// --- Tremble state ---
-	TSharedPtr<FActiveTimerHandle>     TrembleTimerHandle;
-	double                             TrembleStartTime = 0.0;
-
-	// --- ShowMessage auto-hide (SlotID=0 only) ---
-	TSharedPtr<FActiveTimerHandle>     AutoHideTimerHandle;
-	float                              AutoHideRemaining    = 0.f;
-	bool                               bIsShowMessageActive = false;
+	// --- Clock (entrance / exit / tremble are computed from it) ---
+	/** true = ShowMessage: the subsystem advances LocalTime itself. false = driven by the sequence time. */
+	bool                               bSelfClocked = false;
+	/** Seconds since the subtitle started. */
+	float                              LocalTime    = 0.f;
+	/** Total display time in seconds; the exit finishes at this time. < 0 = until HideMessage (self-clocked). */
+	float                              Duration     = 0.f;
 
 #if WITH_EDITOR
 	// Per-slot drag handle (editor only)
@@ -139,6 +158,9 @@ struct FSeqImageSlot
 	/** Eased motion progress of the last update (0 = at Layout.Offset, 1 = at Motion.EndOffset). */
 	float                              MotionAlpha = 0.f;
 
+	/** Keyframe values of the last update (combined with the layout / motion). */
+	FSeqImageKeyedValues               Keyed;
+
 #if WITH_EDITOR
 	TSharedPtr<SSubtitleDragHandle>    DragHandle;
 	TWeakObjectPtr<UMovieSceneSeqImageSection> Section;
@@ -161,20 +183,35 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Subtitles")
 	FOnSubtitlePageAdvanced OnPageAdvanced;
 
+	/** Like OnSubtitleStarted, with a slot ID to tell simultaneous subtitles apart (for custom UI). */
+	UPROPERTY(BlueprintAssignable, Category="Subtitles")
+	FOnSubtitleSlotStarted OnSubtitleSlotStarted;
+
+	/** Visible text changed while the typewriter reveals it. Also fired when the built-in display is off. */
+	UPROPERTY(BlueprintAssignable, Category="Subtitles")
+	FOnSubtitleSlotTextChanged OnSubtitleSlotTextChanged;
+
+	UPROPERTY(BlueprintAssignable, Category="Subtitles")
+	FOnSubtitleSlotEnded OnSubtitleSlotEnded;
+
 	// --- Multi-slot API (called by sequencer eval tokens) ---
 	void NotifySubtitleStarted(uint32 SlotID, const FText& InSubtitleText, FLinearColor InBarColor, const FSubtitleAppearance& InAppearance, const FText& InSpeakerName = FText::GetEmpty());
-	void NotifySubtitleEnded(uint32 SlotID);
-	void UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCharCount);
 
 	/**
-	 * Returns true if a slot is active and NOT pending removal.
-	 * Slots in exit-animation are considered inactive so the sequencer
-	 * can restart them (e.g. on scrub-back) without waiting for the fade to finish.
+	 * Sequencer subtitles: remove immediately (the exit already played inside the section).
+	 * ShowMessage (self-clocked): start the exit animation.
 	 */
+	void NotifySubtitleEnded(uint32 SlotID);
+
+	/** Update entrance / exit / tremble of a sequencer subtitle for LocalTime seconds into its section. */
+	void UpdateSubtitleTime(uint32 SlotID, float LocalTime, float Duration);
+
+	void UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCharCount);
+
 	bool IsSlotActive(uint32 SlotID) const
 	{
 		const TSharedPtr<FSubtitleSlot>* Slot = ActiveSlots.Find(SlotID);
-		return Slot && Slot->IsValid() && !(*Slot)->bPendingRemoval;
+		return Slot && Slot->IsValid();
 	}
 
 	// --- Legacy no-SlotID API (used by ShowMessage / HideMessage, maps to SlotID=0) ---
@@ -204,6 +241,7 @@ public:
 
 	// UWorldSubsystem interface
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
 	// BP-readable state (reflects most recently started slot)
@@ -225,7 +263,8 @@ public:
 	 * Show or update an image at LocalTime seconds into its section.
 	 * Outside [0, Duration) the image is removed.
 	 */
-	void UpdateImage(uint32 SlotID, const FSeqImageParams& Params, float LocalTime, float Duration, UMovieSceneSeqImageSection* SourceSection = nullptr);
+	void UpdateImage(uint32 SlotID, const FSeqImageParams& Params, const FSeqImageKeyedValues& Keyed,
+		float LocalTime, float Duration, UMovieSceneSeqImageSection* SourceSection = nullptr);
 
 	/** Remove an image (no-op if not shown). */
 	void RemoveImage(uint32 SlotID);
@@ -255,6 +294,12 @@ private:
 	/** Show the overlay while any subtitle or image is active. */
 	void UpdateOverlayVisibility();
 
+	/** Dragging in the editor viewport is possible (editor world + project setting). */
+	bool IsViewportDragAllowed() const;
+
+	/** The built-in display should show this subtitle (project setting; player setting for sequencer subtitles). */
+	bool ShouldDisplaySlot(const FSubtitleSlot& Slot) const;
+
 	// Image helpers
 	void CreateImageSlotWidget(uint32 SlotID, FSeqImageSlot& Slot);
 	void PlaceImageSlot(FSeqImageSlot& Slot);
@@ -262,24 +307,32 @@ private:
 
 	// Per-slot widget management
 	void CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot);
-	void RemoveSlotWidget(uint32 SlotID);
+	/** Remove a subtitle (widgets and state). Broadcasts the ended events when bBroadcast. */
+	void RemoveSlot(uint32 SlotID, bool bBroadcast = true);
+
+	// Position groups (F2)
+	void PlaceSlotInGroup(FSubtitleSlot& Slot);
+	void RemoveSlotFromGroup(FSubtitleSlot& Slot);
 
 	// Per-slot appearance / speaker helpers
+	FSubtitleAppearance MakeEffectiveAppearance(const FSubtitleAppearance& InAppearance) const;
 	void ApplyAppearanceToSlot(FSubtitleSlot& Slot, const FSubtitleAppearance& InAppearance);
-	void ApplyOverlayPosition(const FSubtitleAppearance& InAppearance);
 	void ApplySpeakerAndSeparatorToSlot(FSubtitleSlot& Slot, const FSubtitleAppearance& InAppearance, const FText& InSpeakerName);
 
-	// Typewriter: first-call initialization (paging, measurement, sound cache)
+	// Typewriter: first-call initialization (paging, sizer, sound cache)
 	void InitTypewriterState(FSubtitleSlot& Slot, uint32 SlotID, const FString& FullStr);
+	void RebuildTypewriterSizer(FSubtitleSlot& Slot);
 
-	// Per-slot animation
-	void StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID, ESubtitleEntranceType InType, float InDuration, bool bReverse);
-	void ApplySlotAnimationAlpha(FSubtitleSlot& Slot, float EasedAlpha);
-	EActiveTimerReturnType TickSlotAnimation(uint32 SlotID, double InCurrentTime, float InDeltaTime);
+	/** Entrance / exit / tremble for the slot's clock (no timers: same result when scrubbing or rendering). */
+	void ApplySubtitleVisual(FSubtitleSlot& Slot);
 
-	void StartTremble(FSubtitleSlot& Slot, uint32 SlotID);
-	void StopTremble(FSubtitleSlot& Slot);
-	EActiveTimerReturnType TickTremble(uint32 SlotID, double InCurrentTime, float InDeltaTime);
+	// ShowMessage clock (real time)
+	void StartSelfClock();
+	void StopSelfClock();
+	bool TickSelfClock(float DeltaTime);
+
+	// Player settings changed: re-apply to the subtitles on screen
+	void HandleUserSettingsChanged();
 
 #if WITH_EDITOR
 	// Per-slot drag callback
@@ -292,14 +345,18 @@ private:
 	// Typewriter sound for a slot
 	void PlayTypewriterSoundForSlot(FSubtitleSlot& Slot, uint32 SlotID, int32 CurrentCharIndex);
 
-	// ShowMessage auto-hide timer
-	EActiveTimerReturnType TickAutoHide(double InCurrentTime, float InDeltaTime);
-
 	// --- Outer (shared) Slate structure ---
 	TSharedPtr<SOverlay>               WidgetOverlay;
 	TSharedPtr<class SDPIScaler>       DPIScalerWidget;
-	TSharedPtr<SVerticalBox>           ContentVerticalBox;
-	SOverlay::FOverlaySlot*            OverlaySlot = nullptr;
+
+	/** One vertical stack per distinct subtitle position (key = position + padding). */
+	TMap<FString, TSharedPtr<SVerticalBox>> SubtitleGroups;
+
+	/** Ticker for the ShowMessage clock. */
+	FTSTicker::FDelegateHandle         SelfClockHandle;
+
+	/** Subscription to USubtitleUserSettings::OnChanged. */
+	FDelegateHandle                    UserSettingsChangedHandle;
 
 	// Image layers behind / in front of the subtitles (full screen)
 	TSharedPtr<SOverlay>               ImageLayerBack;
@@ -322,6 +379,13 @@ private:
 	// Sound cache per slot (UPROPERTY to prevent GC)
 	UPROPERTY()
 	TMap<uint32, TObjectPtr<USoundBase>> SlotSoundCache;
+
+	// Window / separator images of the shown subtitles (UPROPERTY to prevent GC while Slate draws them)
+	UPROPERTY()
+	TMap<uint32, TObjectPtr<UTexture2D>> SlotWindowTextures;
+
+	UPROPERTY()
+	TMap<uint32, TObjectPtr<UTexture2D>> SlotLineTextures;
 
 	// --- Active images (keyed by image section UniqueID) ---
 	TMap<uint32, TSharedPtr<FSeqImageSlot>> ActiveImages;

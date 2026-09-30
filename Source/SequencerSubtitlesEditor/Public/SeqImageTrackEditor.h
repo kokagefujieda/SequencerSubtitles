@@ -5,8 +5,12 @@
 #include "CoreMinimal.h"
 #include "MovieSceneTrackEditor.h"
 #include "ISequencerSection.h"
+#include "Styling/SlateBrush.h"
 
-/** Section UI: bar background + image name on the timeline. */
+class UTexture2D;
+class UMovieSceneSeqImageSection;
+
+/** Section UI: bar background, image name and a thumbnail at the right end. */
 class FSeqImageSectionUI : public FSequencerSection
 {
 public:
@@ -14,6 +18,15 @@ public:
 
 	virtual int32 OnPaintSection(FSequencerSectionPainter& Painter) const override;
 	virtual FText GetSectionTitle() const override;
+#if ENGINE_MINOR_VERSION >= 7
+	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
+#else
+	virtual float GetSectionHeight() const override;
+#endif
+
+private:
+	/** Brush for the thumbnail (re-pointed at the section's texture when painting). */
+	mutable FSlateBrush ThumbnailBrush;
 };
 
 /** Track editor for the Image Track: menu registration + section creation. */
@@ -38,7 +51,12 @@ public:
 		UMovieSceneTrack* Track,
 		const FBuildEditWidgetParams& Params) override;
 
+	/** A texture dropped from the Content Browser becomes an image section at the playhead. */
+	virtual bool HandleAssetAdded(UObject* Asset, const FGuid& TargetObjectGuid) override;
+
 private:
 	void HandleAddImageTrack();
-	void AddNewSectionToTrack(UMovieSceneTrack* Track);
+
+	/** Add a section at the playhead (with Texture if given). Returns the new section. */
+	UMovieSceneSeqImageSection* AddNewSectionToTrack(UMovieSceneTrack* Track, UTexture2D* Texture = nullptr);
 };

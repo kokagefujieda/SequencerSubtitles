@@ -7,6 +7,8 @@
 
 #include "ISequencer.h"
 #include "SequencerSectionPainter.h"
+#include "Engine/Texture2D.h"
+#include "Rendering/DrawElements.h"
 #include "MovieScene.h"
 #include "ScopedTransaction.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -29,7 +31,63 @@ FSeqImageSectionUI::FSeqImageSectionUI(UMovieSceneSection& InSection)
 
 int32 FSeqImageSectionUI::OnPaintSection(FSequencerSectionPainter& Painter) const
 {
-	return Painter.PaintSectionBackground();
+	int32 LayerId = Painter.PaintSectionBackground();
+
+	UMovieSceneSeqImageSection* ImageSection = Cast<UMovieSceneSeqImageSection>(
+		const_cast<FSeqImageSectionUI*>(this)->GetSectionObject());
+	if (!ImageSection || ImageSection->Image.IsNull())
+	{
+		return LayerId;
+	}
+
+	// Load once so the thumbnail shows before the section is first evaluated
+	UTexture2D* Texture = ImageSection->Image.Get();
+	if (!Texture)
+	{
+		Texture = ImageSection->Image.LoadSynchronous();
+	}
+	if (!Texture)
+	{
+		return LayerId;
+	}
+
+	// Thumbnail at the right end of the bar (skipped when the section is too short)
+	const FVector2f SectionSize = FVector2f(Painter.SectionGeometry.GetLocalSize());
+	const float     ThumbH      = FMath::Min(SectionSize.Y - 4.f, 36.f);
+	const FIntPoint Imported    = Texture->GetImportedSize();
+	const float     Aspect      = (Imported.X > 0 && Imported.Y > 0) ? static_cast<float>(Imported.X) / Imported.Y : 1.f;
+	const float     ThumbW      = ThumbH * Aspect;
+	if (ThumbH < 4.f || ThumbW + 8.f > SectionSize.X * 0.5f)
+	{
+		return LayerId;
+	}
+
+	ThumbnailBrush = FSlateBrush();
+	ThumbnailBrush.SetResourceObject(Texture);
+	ThumbnailBrush.ImageSize = FVector2D(ThumbW, ThumbH);
+	ThumbnailBrush.DrawAs    = ESlateBrushDrawType::Image;
+
+	FSlateDrawElement::MakeBox(
+		Painter.DrawElements,
+		++LayerId,
+		Painter.SectionGeometry.ToPaintGeometry(
+			FVector2f(ThumbW, ThumbH),
+			FSlateLayoutTransform(FVector2f(SectionSize.X - ThumbW - 4.f, (SectionSize.Y - ThumbH) * 0.5f))),
+		&ThumbnailBrush,
+		ESlateDrawEffect::None,
+		FLinearColor(1.f, 1.f, 1.f, Painter.GhostAlpha));
+
+	return LayerId;
+}
+
+#if ENGINE_MINOR_VERSION >= 7
+float FSeqImageSectionUI::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
+#else
+float FSeqImageSectionUI::GetSectionHeight() const
+#endif
+{
+	// Taller than the subtitle bar so the thumbnail is readable
+	return 40.0f;
 }
 
 FText FSeqImageSectionUI::GetSectionTitle() const
@@ -132,23 +190,27 @@ TSharedPtr<SWidget> FSeqImageTrackEditor::BuildOutlinerEditWidget(
 #endif
 }
 
-void FSeqImageTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
+UMovieSceneSeqImageSection* FSeqImageTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track, UTexture2D* Texture)
 {
 	TSharedPtr<ISequencer> SequencerPtr = GetSequencer();
 	UMovieScene* FocusedMovieScene = GetFocusedMovieScene();
 	if (!SequencerPtr.IsValid() || !Track || !FocusedMovieScene || FocusedMovieScene->IsReadOnly())
 	{
-		return;
+		return nullptr;
 	}
 
 	const FScopedTransaction Transaction(LOCTEXT("AddImageSection_Transaction", "Add Image Section"));
 	FocusedMovieScene->Modify();
 	Track->Modify();
 
-	UMovieSceneSection* NewSection = Track->CreateNewSection();
+	UMovieSceneSeqImageSection* NewSection = Cast<UMovieSceneSeqImageSection>(Track->CreateNewSection());
 	if (!NewSection)
 	{
-		return;
+		return nullptr;
+	}
+	if (Texture)
+	{
+		NewSection->Image = Texture;
 	}
 
 	// Start at the playhead with the default subtitle section duration
@@ -172,6 +234,35 @@ void FSeqImageTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
 	SequencerPtr->EmptySelection();
 	SequencerPtr->SelectSection(NewSection);
 	SequencerPtr->ThrobSectionSelection();
+	return NewSection;
+}
+
+bool FSeqImageTrackEditor::HandleAssetAdded(UObject* Asset, const FGuid& TargetObjectGuid)
+{
+	// Only textures dropped on the sequence itself (not on an actor binding)
+	UTexture2D* Texture = Cast<UTexture2D>(Asset);
+	UMovieScene* FocusedMovieScene = GetFocusedMovieScene();
+	if (!Texture || TargetObjectGuid.IsValid() || !FocusedMovieScene || FocusedMovieScene->IsReadOnly())
+	{
+		return false;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("DropImage_Transaction", "Add Image Section"));
+	FocusedMovieScene->Modify();
+
+	// Use the first Image Track, or create one
+	UMovieSceneSeqImageTrack* ImageTrack = nullptr;
+	for (UMovieSceneTrack* Track : FocusedMovieScene->GetTracks())
+	{
+		ImageTrack = Cast<UMovieSceneSeqImageTrack>(Track);
+		if (ImageTrack) { break; }
+	}
+	if (!ImageTrack)
+	{
+		ImageTrack = FocusedMovieScene->AddTrack<UMovieSceneSeqImageTrack>();
+	}
+
+	return AddNewSectionToTrack(ImageTrack, Texture) != nullptr;
 }
 
 void FSeqImageTrackEditor::HandleAddImageTrack()
