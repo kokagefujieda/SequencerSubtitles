@@ -3,7 +3,6 @@
 #include "SSeqImage.h"
 #include "Engine/Texture2D.h"
 #include "Rendering/DrawElements.h"
-#include <type_traits>
 
 namespace
 {
@@ -28,14 +27,11 @@ namespace
 			Alpha = FMath::Clamp(Alpha, 0.f, 1.f);
 			if (Max.X - Min.X < 0.01 || Max.Y - Min.Y < 0.01 || Alpha <= 0.f) { return; }
 
-			// Show only the matching part of the texture (UV region); the brush's box type differs between engine versions
-			using FUVBox  = std::decay_t<decltype(Brush.GetUVRegion())>;
-			using FUVVec  = decltype(FUVBox::Min);
-			using FUVReal = decltype(FUVVec::X);
+			// Show only the matching part of the texture (UV region); SetUVRegion(FBox2f) exists in 5.5-5.8
 			FSlateBrush PartBrush = Brush;
-			PartBrush.SetUVRegion(FUVBox(
-				FUVVec(static_cast<FUVReal>(Min.X / Size.X), static_cast<FUVReal>(Min.Y / Size.Y)),
-				FUVVec(static_cast<FUVReal>(Max.X / Size.X), static_cast<FUVReal>(Max.Y / Size.Y))));
+			PartBrush.SetUVRegion(FBox2f(
+				FVector2f(static_cast<float>(Min.X / Size.X), static_cast<float>(Min.Y / Size.Y)),
+				FVector2f(static_cast<float>(Max.X / Size.X), static_cast<float>(Max.Y / Size.Y))));
 
 			FLinearColor PartColor = Color;
 			PartColor.A *= Alpha;

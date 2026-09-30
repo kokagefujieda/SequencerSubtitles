@@ -1759,7 +1759,7 @@ void USubtitleSubsystem::ApplySubtitleVisual(FSubtitleSlot& Slot)
 	}
 
 	// Fade / slide / tremble act on each visible part
-	const FSlateRenderTransform PartTransform(FVector2f(Offset));
+	const FSlateRenderTransform PartTransform = FSlateRenderTransform(FVector2f(Offset));
 	Slot.SubtitleBorder->SetRenderOpacity(Opacity);
 	Slot.SubtitleBorder->SetRenderTransform(PartTransform);
 	if (Slot.SpeakerTextOverlay.IsValid())

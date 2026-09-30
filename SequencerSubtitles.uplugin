@@ -14,7 +14,6 @@
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
-	"EngineVersion": "5.8.0",
 	"Installed": true,
 	"Modules": [
 		{

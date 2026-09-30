@@ -184,9 +184,8 @@
 - サンプルのレベルとシーケンスに、アウトラインと Image Track の例を追加する（エディタでの作業）。
 - 対応プラットフォーム: 今は Win64 のみ。プラットフォーム固有のコードはないので、Mac / Linux を加えられる可能性がある（要確認）。
 - 配布用の zip から `CLAUDE.md` と `docs/` を除外する。
-- **uplugin の `EngineVersion`（未決定・ユーザー確認待ち）:** 今は `"5.8.0"` だが、README では 5.5〜5.8 に対応としている。
-  - この項目があると、ほかの版で「別の版向け」の警告や互換性チェックに引っかかる可能性がある（記憶ベース、要確認）。
-  - 案: GitHub 配布では項目を消す。Fab に出すときは、版ごとのパッケージで設定する。
+- **uplugin の `EngineVersion`:** 2026-09-30 に**削除した**（ユーザーの指示。下の「ビルドの確認」を参照）。
+  - Fab に出すときは、版ごとのパッケージで値が入る（Fab の 5.7 用 v1.3 は `"5.7.0"` だった）。
   - プラグインのアセットは、対応する一番古い版で保存する（新しい版で保存すると古い版では開けない）。
 
 ## 対応状況
@@ -201,3 +200,31 @@
   - `bIsSubtitleActive` / `CurrentSubtitleText`（オートの文字数）
   - `UMovieSceneSeqSubtitleSection::SubtitleText`（オートの文字数、既読のキー）
 - そのため、CinematicADV には SequencerSubtitles v1.4（未リリース）が必要。
+
+## ビルドの確認（2026-09-30、ユーザーが実施）
+
+- **環境:** UE 5.7.4（Launcher 版）、Visual Studio 2022（MSVC 14.44）、空の C++ プロジェクト、Development Editor / Win64
+- **対象:** 作業ブランチ（SequencerSubtitles `d4c984d`、CinematicADV `3643515`）
+
+### 結果と修正
+- **SequencerSubtitles のコンパイルエラー 2 件**（ユーザーが原因を特定し、修正案をもらった。そのまま反映した）
+  - `SSeqImage.cpp`: `GetUVRegion()` の戻り値は 5.5〜5.8 のどれも `UE::Slate::FDeprecateBox2D`（`Min` を持たない）。
+    - 版の差ではなかった。`SetUVRegion(const FBox2f&)` は 5.5〜5.8 のすべてにあるので、`FBox2f` を直接渡す。
+  - `SubtitleSubsystem.cpp`: `const FSlateRenderTransform PartTransform(FVector2f(Offset));` が、関数の宣言として解釈されていた（C++ の構文の落とし穴）。`= FSlateRenderTransform(...)` の形にした。
+    - 同じ形の書き方は、両リポジトリにほかにはない（検索で確認）。
+- **CinematicADV:** コンパイルは通った。
+- 修正後、5.7 でビルド成功（警告 0）。エディタの起動・終了も確認済み。
+
+### EngineVersion の挙動（確認済み）
+- `"5.8.0"` の SequencerSubtitles を 5.7 で開くと、警告と「Attempt to load it anyway?」のダイアログが出る。「いいえ」（無人起動も同じ）だと読み込まれない。
+- 判定は PluginManager の `IsPluginCompatible`（メジャー・マイナー・パッチの比較）。エディタのときだけで、パッケージ版では出ない。
+- 項目を消すと、警告もダイアログも出ず、全モジュールが読み込めた。→ 両プラグインから削除した。
+
+### その他（対応不要）
+- アセット: CinematicADV の 7 個（SC_Voice を含む）は 5.7、SequencerSubtitles のサンプル 2 個は 5.5 で保存されている。どれも 5.7 で開ける。
+- エンジンに Fab 版の SequencerSubtitles が入っていても、プロジェクト側のプラグインが優先された（衝突なし）。
+
+### 次に確認すること
+- 修正後の 5.7 でのビルド（ユーザーが pull して確認）
+- 5.8 でのビルド
+- 動作確認（docs/V1_4_PLAN.md と CinematicADV の docs/REVIEW_NOTES.md の「確認してほしいこと」）
