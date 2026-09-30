@@ -28,6 +28,7 @@
 #include "SSubtitleDragHandle.h"
 #include "SubtitleSection.h"
 #include "SubtitleTrack.h"
+#include "ScopedTransaction.h"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -44,13 +45,25 @@ void USubtitleSubsystem::EnsureSlateWidgets()
 	// ContentVerticalBox stacks all active subtitle entries
 	ContentVerticalBox = SNew(SVerticalBox);
 
+	// Full-screen image layers behind and in front of the subtitles
+	ImageLayerBack  = SNew(SOverlay).Visibility(EVisibility::SelfHitTestInvisible);
+	ImageLayerFront = SNew(SOverlay).Visibility(EVisibility::SelfHitTestInvisible);
+
 	WidgetOverlay = SNew(SOverlay)
+		+ SOverlay::Slot()
+		[
+			ImageLayerBack.ToSharedRef()
+		]
 		+ SOverlay::Slot()
 		.Expose(OverlaySlot)
 		.VAlign(VAlign_Bottom)
 		.Padding(40.f, 20.f)
 		[
 			ContentVerticalBox.ToSharedRef()
+		]
+		+ SOverlay::Slot()
+		[
+			ImageLayerFront.ToSharedRef()
 		];
 
 	WidgetOverlay->SetVisibility(EVisibility::Hidden);
@@ -256,11 +269,8 @@ void USubtitleSubsystem::RemoveSlotWidget(uint32 SlotID)
 	ActiveSlots.Remove(SlotID);
 	SlotSoundCache.Remove(SlotID);
 
-	// Hide overlay when no slots remain
-	if (ActiveSlots.IsEmpty() && WidgetOverlay.IsValid())
-	{
-		WidgetOverlay->SetVisibility(EVisibility::Hidden);
-	}
+	// Hide overlay when nothing remains
+	UpdateOverlayVisibility();
 
 	// Update BP-compat state
 	if (ActiveSlots.IsEmpty())
@@ -858,6 +868,8 @@ void USubtitleSubsystem::Deinitialize()
 	}
 	ActiveSlots.Empty();
 	SlotSoundCache.Empty();
+	ActiveImages.Empty();
+	ImageTextures.Empty();
 
 	RemoveFromViewport();
 #if WITH_EDITOR
@@ -866,6 +878,8 @@ void USubtitleSubsystem::Deinitialize()
 	DPIScalerWidget.Reset();
 	WidgetOverlay.Reset();
 	ContentVerticalBox.Reset();
+	ImageLayerBack.Reset();
+	ImageLayerFront.Reset();
 	OverlaySlot = nullptr;
 
 	Super::Deinitialize();
@@ -905,6 +919,7 @@ void USubtitleSubsystem::OnSlotDragOffsetChanged(uint32 SlotID, FVector2D NewOff
 	UMovieSceneSeqSubtitleSection* Section = ActiveSections.FindRef(SlotID).Get();
 	if (Section)
 	{
+		const FScopedTransaction Transaction(NSLOCTEXT("SequencerSubtitles", "DragSubtitle", "Move Subtitle"));
 		if (Section->bOverrideAppearance)
 		{
 			Section->Modify();
@@ -1483,24 +1498,10 @@ void USubtitleSubsystem::StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID,
 	Slot.bAnimating   = true;
 	Slot.bExitAnim    = bReverse;
 
-	// Compute viewport-relative slide offsets in Slate units.
-	// Viewport pixels per Slate unit = DPI curve value, both in game (engine game layer)
-	// and in the editor viewport (GetSubtitleDPIScale).
-	Slot.SlideOffsetX = 2000.f;
-	Slot.SlideOffsetY = 1200.f;
-	const FIntPoint VPSize = GetHostViewportSize();
-	if (VPSize.X > 0 && VPSize.Y > 0)
-	{
-		if (const UUserInterfaceSettings* UISettings = GetDefault<UUserInterfaceSettings>())
-		{
-			const float UIScale = UISettings->GetDPIScaleBasedOnSize(VPSize);
-			if (UIScale > 0.01f)
-			{
-				Slot.SlideOffsetX = static_cast<float>(VPSize.X) / UIScale;
-				Slot.SlideOffsetY = static_cast<float>(VPSize.Y) / UIScale;
-			}
-		}
-	}
+	// Viewport-relative slide offsets in Slate units (fallback when the viewport size is unknown)
+	const FVector2D ViewportSize = GetViewportSlateSize();
+	Slot.SlideOffsetX = ViewportSize.X > 0.0 ? static_cast<float>(ViewportSize.X) : 2000.f;
+	Slot.SlideOffsetY = ViewportSize.Y > 0.0 ? static_cast<float>(ViewportSize.Y) : 1200.f;
 
 	ApplySlotAnimationAlpha(Slot, bReverse ? 1.0f : 0.0f);
 
@@ -1734,6 +1735,33 @@ FIntPoint USubtitleSubsystem::GetHostViewportSize() const
 		return FIntPoint(FMath::RoundToInt(VPSize.X), FMath::RoundToInt(VPSize.Y));
 	}
 	return FIntPoint::ZeroValue;
+}
+
+FVector2D USubtitleSubsystem::GetViewportSlateSize() const
+{
+	// Viewport pixels per Slate unit = DPI curve value, both in game (engine game layer)
+	// and in the editor viewport (GetSubtitleDPIScale)
+	const FIntPoint VPSize = GetHostViewportSize();
+	if (VPSize.X > 0 && VPSize.Y > 0)
+	{
+		if (const UUserInterfaceSettings* UISettings = GetDefault<UUserInterfaceSettings>())
+		{
+			const float UIScale = UISettings->GetDPIScaleBasedOnSize(VPSize);
+			if (UIScale > 0.01f)
+			{
+				return FVector2D(VPSize.X, VPSize.Y) / UIScale;
+			}
+		}
+	}
+	return FVector2D::ZeroVector;
+}
+
+void USubtitleSubsystem::UpdateOverlayVisibility()
+{
+	if (!WidgetOverlay.IsValid()) { return; }
+
+	const bool bAnyActive = ActiveSlots.Num() > 0 || ActiveImages.Num() > 0;
+	WidgetOverlay->SetVisibility(bAnyActive ? EVisibility::SelfHitTestInvisible : EVisibility::Hidden);
 }
 
 float USubtitleSubsystem::GetSubtitleDPIScale() const

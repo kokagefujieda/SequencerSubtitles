@@ -13,4 +13,5 @@ public:
 
 private:
 	FDelegateHandle TrackEditorBindingHandle;
+	FDelegateHandle ImageTrackEditorBindingHandle;
 };

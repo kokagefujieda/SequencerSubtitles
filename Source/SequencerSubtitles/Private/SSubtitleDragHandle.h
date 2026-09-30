@@ -52,6 +52,11 @@ public:
 		bDragEnabled = bEnabled;
 	}
 
+	bool IsDragging() const
+	{
+		return bDragging;
+	}
+
 	/** Store a reference to the viewport overlay for clamp bounds calculation. */
 	void SetViewportWidget(TSharedPtr<SWidget> InWidget)
 	{

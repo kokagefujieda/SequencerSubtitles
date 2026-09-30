@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "SubtitleSettings.h"
+#include "SeqImageTypes.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/SBoxPanel.h"
 #include "Styling/SlateBrush.h"
@@ -17,7 +18,9 @@ class SBox;
 class USoundBase;
 class UGameViewportClient;
 class SSubtitleSeparatorLine;
+class SSeqImage;
 class UMovieSceneSeqSubtitleSection;
+class UMovieSceneSeqImageSection;
 #if WITH_EDITOR
 class SSubtitleDragHandle;
 class IAssetViewport;
@@ -115,6 +118,33 @@ struct FSubtitleSlot
 #endif
 };
 
+/**
+ * Widgets and state for one image shown by an Image Track section (keyed by section UniqueID).
+ * Root (drag handle in the editor) -> OffsetBox (layout offset + motion) -> ImageWidget (effects).
+ */
+struct FSeqImageSlot
+{
+	TSharedPtr<SWidget>                RootWidget;
+	TSharedPtr<SBox>                   OffsetBox;
+	TSharedPtr<SSeqImage>              ImageWidget;
+	SOverlay::FOverlaySlot*            LayerSlot = nullptr;
+	bool                               bInFront  = false;
+	int32                              ZOrder    = 0;
+	ESeqImageAnchor                    Anchor    = ESeqImageAnchor::Center;
+	FSoftObjectPath                    TexturePath;
+
+	/** Settings of the last update. */
+	FSeqImageParams                    Params;
+
+	/** Eased motion progress of the last update (0 = at Layout.Offset, 1 = at Motion.EndOffset). */
+	float                              MotionAlpha = 0.f;
+
+#if WITH_EDITOR
+	TSharedPtr<SSubtitleDragHandle>    DragHandle;
+	TWeakObjectPtr<UMovieSceneSeqImageSection> Section;
+#endif
+};
+
 /** Broadcasts subtitle start/end events from Sequencer evaluation to UI widgets. */
 UCLASS()
 class SEQUENCERSUBTITLES_API USubtitleSubsystem : public UWorldSubsystem
@@ -189,6 +219,17 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category="Subtitles")
 	FText CurrentSpeakerName;
 
+	// --- Image API (called by image track eval tokens) ---
+
+	/**
+	 * Show or update an image at LocalTime seconds into its section.
+	 * Outside [0, Duration) the image is removed.
+	 */
+	void UpdateImage(uint32 SlotID, const FSeqImageParams& Params, float LocalTime, float Duration, UMovieSceneSeqImageSection* SourceSection = nullptr);
+
+	/** Remove an image (no-op if not shown). */
+	void RemoveImage(uint32 SlotID);
+
 	/** Apply MaxCharsPerLine wrapping to a string. Returns the wrapped version. */
 	static FString WrapTextByCharLimit(const FString& InText, int32 MaxCharsPerLine);
 
@@ -207,6 +248,17 @@ private:
 
 	/** Scale applied by DPIScalerWidget (on top of whatever Slate already applies). */
 	float GetSubtitleDPIScale() const;
+
+	/** Viewport size in Slate units (zero if unknown). */
+	FVector2D GetViewportSlateSize() const;
+
+	/** Show the overlay while any subtitle or image is active. */
+	void UpdateOverlayVisibility();
+
+	// Image helpers
+	void CreateImageSlotWidget(uint32 SlotID, FSeqImageSlot& Slot);
+	void PlaceImageSlot(FSeqImageSlot& Slot);
+	void ApplyImageState(FSeqImageSlot& Slot, float LocalTime, float Duration);
 
 	// Per-slot widget management
 	void CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot);
@@ -232,6 +284,9 @@ private:
 #if WITH_EDITOR
 	// Per-slot drag callback
 	void OnSlotDragOffsetChanged(uint32 SlotID, FVector2D NewOffset);
+
+	// Image drag callback
+	void OnImageDragFinished(uint32 SlotID, FVector2D NewOffset);
 #endif
 
 	// Typewriter sound for a slot
@@ -245,6 +300,10 @@ private:
 	TSharedPtr<class SDPIScaler>       DPIScalerWidget;
 	TSharedPtr<SVerticalBox>           ContentVerticalBox;
 	SOverlay::FOverlaySlot*            OverlaySlot = nullptr;
+
+	// Image layers behind / in front of the subtitles (full screen)
+	TSharedPtr<SOverlay>               ImageLayerBack;
+	TSharedPtr<SOverlay>               ImageLayerFront;
 
 	bool bAddedToViewport  = false;
 	bool bIsEditorViewport = false;
@@ -263,6 +322,13 @@ private:
 	// Sound cache per slot (UPROPERTY to prevent GC)
 	UPROPERTY()
 	TMap<uint32, TObjectPtr<USoundBase>> SlotSoundCache;
+
+	// --- Active images (keyed by image section UniqueID) ---
+	TMap<uint32, TSharedPtr<FSeqImageSlot>> ActiveImages;
+
+	// Textures of the shown images (UPROPERTY to prevent GC while Slate draws them)
+	UPROPERTY()
+	TMap<uint32, TObjectPtr<UTexture2D>> ImageTextures;
 
 #if WITH_EDITOR
 	TMap<uint32, TWeakObjectPtr<UMovieSceneSeqSubtitleSection>> ActiveSections;

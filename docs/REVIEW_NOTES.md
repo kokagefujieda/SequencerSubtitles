@@ -76,6 +76,8 @@
 - e. ◎ Slate タイマーのラムダが生の `this` を捕捉している（`:193, :789, :1564, :1691`）。また `Deinitialize` でトレンブルのタイマーを止めていない。
 - f. ◎ 使われていないコード: `ToggleTypewriterOnAllSections` / `HasAnyTypewriterEnabled` / `BuildColorPresetMenu`
 - g. ◎ `WrapTextByCharLimit` は TCHAR 単位で切るため、サロゲートペア（絵文字など）が分断される。禁則処理もない。
+- i. △ 字幕のウィンドウ画像と区切り線の画像は、`LoadSynchronous` したテクスチャを FSlateBrush でしか参照していない。
+  - GC に回収される可能性がある（特にパッケージ版）。Image Track のように UPROPERTY で保持するのが安全。未対応。
 - h. △ アウトラインのレイヤー（最大 11 枚の STextBlock）は、それぞれ別に折り返しを計算している。アウトラインで計測幅が変わる場合、折り返し位置の付近で行がずれる可能性がある。
 
 ---

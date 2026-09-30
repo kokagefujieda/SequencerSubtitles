@@ -10,6 +10,8 @@
   - Phase 1: 開始位置・終了位置のプリセット＋ビューポートでのドラッグ
   - Phase 2: キーフレーム
 - 素材: **テクスチャ（Texture2D）のみ**。
+- 入れる場所: **Sequencer Subtitles に同梱**。
+- 退場のタイミング: **セクション内で完了**（セクションの終わりの Duration 秒で退場する）。
 
 ## 前提の調査
 
@@ -77,6 +79,38 @@
 
 ### 位置の移動（プリセット）
 - 開始 Offset → 終了 Offset を、指定した時間（またはセクション全体）で移動する。Easing 付き。
+
+## Phase 1 の実装状況（コミット済み・**未ビルド**）
+
+| ファイル | 内容 |
+|---|---|
+| `Public/SeqImageTypes.h` | 列挙型と設定の構造体（Layout / Transition / Continuous / Motion / Params） |
+| `Public/SeqImageSection.h`, `Private/SeqImageSection.cpp` | `UMovieSceneSeqImageSection` |
+| `Public/SeqImageTrack.h`, `Private/SeqImageTrack.cpp` | `UMovieSceneSeqImageTrack` |
+| `Public/SeqImageEvalTemplate.h`, `Private/SeqImageEvalTemplate.cpp` | 時間駆動の評価。区間外なら削除 |
+| `Private/SSeqImage.h/.cpp` | マスク系エフェクト（Wipe / Barn Door / Iris / Blinds / Split）の描画 |
+| `Private/SubtitleSubsystemImages.cpp` | 画像レイヤーの管理、エフェクト・イージング・移動の計算、ドラッグでの位置調整 |
+| Editor: `SeqImageTrackEditor.h/.cpp` | 「+ Track」メニュー、「+ Image」ボタン、セクション名にテクスチャ名を表示 |
+
+### 実装で決めたこと
+- 「Pop」は独立したエフェクトにせず、**Zoom ＋ Easing = Back / Bounce** で表現する（重複を避けるため）。
+- 「下から上にフェードイン」の作り方:
+  - 滑り上がり: Slide ＋ Direction = Bottom ＋ Distance = 40 程度 ＋ Fade ON
+  - ワイプ: Wipe ＋ Direction = Bottom ＋ Softness でぼかし幅を指定
+- Exit を上書きしない場合は、登場を逆再生する。上書きした場合は、Exit 自身の Easing で順方向に再生する。
+- ドラッグで位置を変えたとき、Motion が有効なら、今の時刻に近いほう（開始 or 終了）の位置を、ドロップした場所に来るように逆算して更新する。
+  - 元に戻せる操作にした。字幕のドラッグも同様に、元に戻せるようにした。
+- ソフトエッジは、テクスチャの UV 範囲を細い帯に分けて、不透明度を段階的に変えて描く（最大 16 段）。
+  - 頂点を直接描く API は UE のバージョンによって差があるため、使わない。
+- 表示中のテクスチャは UPROPERTY で保持し、GC されないようにした。
+
+### 確認してほしいこと
+- UE 5.5〜5.8 でビルドが通るか。特に `FSlateBrush::GetUVRegion` / `SetUVRegion`、`FSlateLayoutTransform`、`FMatrix2x2` まわり。
+- 各エフェクトの見た目と、スクラブ・逆再生での動き。
+- ソフトエッジの段差が目立たないか。
+- 区間の外（隙間）で画像が残らないか。
+- エディタ上でのドラッグと Undo、Motion 有効時のドラッグ。
+- PIE とパッケージで、サイズや位置がエディタのプレビューと合っているか。
 
 ## Phase 2
 - キーフレーム: 位置 X/Y、拡大率、回転、不透明度（`FMovieSceneFloatChannel`。カーブエディタに対応）。

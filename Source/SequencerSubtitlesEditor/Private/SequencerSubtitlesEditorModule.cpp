@@ -3,6 +3,7 @@
 #include "SequencerSubtitlesEditorModule.h"
 #include "ISequencerModule.h"
 #include "SubtitleTrackEditor.h"
+#include "SeqImageTrackEditor.h"
 
 #define LOCTEXT_NAMESPACE "FSequencerSubtitlesEditorModule"
 
@@ -11,6 +12,8 @@ void FSequencerSubtitlesEditorModule::StartupModule()
 	ISequencerModule& SequencerModule = FModuleManager::LoadModuleChecked<ISequencerModule>("Sequencer");
 	TrackEditorBindingHandle = SequencerModule.RegisterTrackEditor(
 		FOnCreateTrackEditor::CreateStatic(&FSubtitleTrackEditor::CreateTrackEditor));
+	ImageTrackEditorBindingHandle = SequencerModule.RegisterTrackEditor(
+		FOnCreateTrackEditor::CreateStatic(&FSeqImageTrackEditor::CreateTrackEditor));
 }
 
 void FSequencerSubtitlesEditorModule::ShutdownModule()
@@ -19,6 +22,7 @@ void FSequencerSubtitlesEditorModule::ShutdownModule()
 	{
 		ISequencerModule& SequencerModule = FModuleManager::GetModuleChecked<ISequencerModule>("Sequencer");
 		SequencerModule.UnRegisterTrackEditor(TrackEditorBindingHandle);
+		SequencerModule.UnRegisterTrackEditor(ImageTrackEditorBindingHandle);
 	}
 }
 
