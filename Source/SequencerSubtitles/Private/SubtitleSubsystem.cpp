@@ -722,6 +722,19 @@ void USubtitleSubsystem::UpdateTypewriterProgress(uint32 SlotID, int32 VisibleCh
 	OnSubtitleSlotTextChanged.Broadcast(static_cast<int32>(SlotID), TypewriterText);
 }
 
+bool USubtitleSubsystem::IsTypewriterRevealing() const
+{
+	for (const auto& Pair : ActiveSlots)
+	{
+		const FSubtitleSlot* Slot = Pair.Value.Get();
+		if (Slot && Slot->bTypewriterActive && Slot->LastVisibleCharCount < Slot->Text.ToString().Len())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // Legacy (SlotID=0)
 void USubtitleSubsystem::UpdateTypewriterProgress(int32 VisibleCharCount)
 {

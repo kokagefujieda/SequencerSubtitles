@@ -214,6 +214,10 @@ public:
 		return Slot && Slot->IsValid();
 	}
 
+	/** true while a typewriter subtitle is still revealing its text (e.g. for "click to show the whole line"). */
+	UFUNCTION(BlueprintPure, Category="Subtitles")
+	bool IsTypewriterRevealing() const;
+
 	// --- Legacy no-SlotID API (used by ShowMessage / HideMessage, maps to SlotID=0) ---
 	void NotifySubtitleStarted(const FText& InSubtitleText, FLinearColor InBarColor, const FSubtitleAppearance& InAppearance, const FText& InSpeakerName = FText::GetEmpty());
 	UFUNCTION()
