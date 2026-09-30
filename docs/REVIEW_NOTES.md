@@ -228,3 +228,16 @@
 - 修正後の 5.7 でのビルド（ユーザーが pull して確認）
 - 5.8 でのビルド
 - 動作確認（docs/V1_4_PLAN.md と CinematicADV の docs/REVIEW_NOTES.md の「確認してほしいこと」）
+
+## 旧版のアセットの読み込み（2026-09-30）
+- ユーザーの確認で、v1.0 で保存したセクションの台詞が空で読み込まれることが分かった（CinematicADV のサンプル）。
+  - v1.1（`f9f14bc`）で `DialogueText` → `SubtitleText` に改名したが、PropertyRedirects がなかった。
+- `Config/DefaultSequencerSubtitles.ini` に追加した:
+  - PropertyRedirects: `MovieSceneSeqSubtitleSection.DialogueText` → `SubtitleText`（ユーザーが 5.7 で確認済み）
+  - StructRedirects: `DialogueAppearance` → `SubtitleAppearance`（v1.1 の構造体の改名。これがないと、v1.0 の見た目の上書き設定が消える。**未確認**）
+    - ほかのプラグインの同名の構造体まで変えないよう、フルパスで書いた（旧モジュール名 `SequencerDialogue` の分も）。
+- v1.0 → v1.1 の改名を調べた結果、ほかのプロパティ名と列挙型の値は変わっていない。
+- **気になる点（提案）:** 既存の ClassRedirects は短い名前（`MovieSceneDialogueTrack` など）で書かれている。
+  - ほかのプラグインに同じ名前のクラスがあると、そちらまで変わってしまう。
+  - フルパスに直すほうが安全。ただし、読み込めなくなる危険もあるので、確認できる環境で直す。
+- `USubtitleSettings`（旧 `UDialogueSettings`）のプロジェクト設定は、ini のセクション名が変わったので、v1.0 の設定は引き継がれない（リダイレクトでは移せない）。
