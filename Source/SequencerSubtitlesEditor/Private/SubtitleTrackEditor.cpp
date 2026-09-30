@@ -446,6 +446,19 @@ void FSubtitleTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMov
 	}
 	MenuBuilder.EndSection();
 
+	MenuBuilder.BeginSection(TEXT("SubtitleAppearance"), LOCTEXT("SubtitleAppearanceMenu", "Appearance"));
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ClearAppearanceOverrides", "Clear Section Appearance Overrides"),
+			LOCTEXT("ClearAppearanceOverridesTooltip", "Turn off Override Appearance on every section in this track so they use the track's appearance again (undoable)"),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateSP(this, &FSubtitleTrackEditor::ClearSectionAppearanceOverrides, Track),
+				FCanExecuteAction::CreateSP(this, &FSubtitleTrackEditor::HasAnySectionAppearanceOverride, Track))
+		);
+	}
+	MenuBuilder.EndSection();
+
 	MenuBuilder.BeginSection(TEXT("SubtitleAllTracks"), LOCTEXT("SubtitleAllTracksMenu", "All Tracks"));
 	{
 		MenuBuilder.AddMenuEntry(
@@ -583,6 +596,42 @@ void FSubtitleTrackEditor::AddNewSectionToTrack(UMovieSceneTrack* Track)
 	SequencerPtr->EmptySelection();
 	SequencerPtr->SelectSection(NewSection);
 	SequencerPtr->ThrobSectionSelection();
+}
+
+// --- Appearance Overrides ---
+
+void FSubtitleTrackEditor::ClearSectionAppearanceOverrides(UMovieSceneTrack* Track)
+{
+	if (!Track) return;
+
+	const FScopedTransaction Transaction(LOCTEXT("ClearAppearanceOverrides_Transaction", "Clear Section Appearance Overrides"));
+
+	for (UMovieSceneSection* Section : Track->GetAllSections())
+	{
+		UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section);
+		if (SubSection && SubSection->bOverrideAppearance)
+		{
+			SubSection->Modify();
+			SubSection->bOverrideAppearance = false;
+		}
+	}
+
+	if (TSharedPtr<ISequencer> SequencerPtr = GetSequencer())
+	{
+		SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::TrackValueChanged);
+	}
+}
+
+bool FSubtitleTrackEditor::HasAnySectionAppearanceOverride(UMovieSceneTrack* Track) const
+{
+	if (!Track) return false;
+
+	for (const UMovieSceneSection* Section : Track->GetAllSections())
+	{
+		const UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section);
+		if (SubSection && SubSection->bOverrideAppearance) return true;
+	}
+	return false;
 }
 
 // --- Export / Import ---

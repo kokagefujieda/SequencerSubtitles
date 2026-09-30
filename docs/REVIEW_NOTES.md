@@ -127,7 +127,9 @@
   - 高 DPI モニタで、エディタのプレビューと PIE の見た目のサイズが揃っているか。
   - タイプライターで、中央揃えの位置が最後まで動かないか。長い 1 行を入れたとき、折り返しとウィンドウの高さが合っているか。
   - JSON の往復（旧形式の JSON も読めるか）と、改行入りの字幕を含む CSV の往復。
-- 以前のバージョンでテキストを編集したセクションは、Override Appearance が ON のまま既定値（FontSize 24）になっている。直すには、セクションの Override Appearance を手動で OFF にする必要がある。
+- 以前のバージョンでテキストを編集したセクションは、Override Appearance が ON のまま既定値（FontSize 24）になっている。直すには、セクションの Override Appearance を OFF にする。
+  - トラックの右クリック → Appearance → **Clear Section Appearance Overrides** で一括 OFF にできる（元に戻す可）。
+  - 意図して上書きしていたセクションも OFF になる点に注意。
 - 次のリリースで README の更新履歴を追記し、バージョンを上げる。MessageWindowHeight の意味（固定 → 最小）と、PIE での表示サイズの変化を明記すること。
 
 ## 6. 没案・将来の検討

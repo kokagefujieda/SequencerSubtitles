@@ -66,6 +66,12 @@ private:
 	/** Import section texts from clipboard CSV. */
 	void ImportSectionsFromClipboardCSV(UMovieSceneTrack* Track);
 
+	/** Turn off bOverrideAppearance on all sections in the track (they fall back to the track appearance). */
+	void ClearSectionAppearanceOverrides(UMovieSceneTrack* Track);
+
+	/** Check if any section in the track overrides the appearance. */
+	bool HasAnySectionAppearanceOverride(UMovieSceneTrack* Track) const;
+
 	/** Export all subtitle tracks in the sequence to clipboard as JSON. */
 	void ExportAllTracksToClipboard();
 
