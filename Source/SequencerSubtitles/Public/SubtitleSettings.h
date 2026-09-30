@@ -102,10 +102,19 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 
 	// ---- Subtitle Text ----
 
+	/**
+	 * Font used for the subtitle and speaker name. Empty = engine default font.
+	 * To use a Font Face, add it to a Font asset and pick that Font here.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text",
-		meta = (AllowedClasses = "/Script/Engine.Font,/Script/Engine.FontFace"))
+		meta = (AllowedClasses = "/Script/Engine.Font"))
 	TSoftObjectPtr<UObject> FontAsset;
 
+	/**
+	 * Font size in Slate units (the same value as FSlateFontInfo::Size; Slate renders fonts at 96 DPI).
+	 * UMG displays sizes converted by Project Settings > User Interface > Font Resolution:
+	 * at the default 72 DPI, a UMG size of N equals N x 0.75 here.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subtitle Text",
 		meta = (ClampMin = "8", ClampMax = "128"))
 	int32 FontSize = 24;
@@ -192,8 +201,8 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	TSoftObjectPtr<UTexture2D> WindowImage;
 
 	/**
-	 * Fixed height of the message window in pixels (before DPI scaling).
-	 * 0 = auto-size (expands with text).
+	 * Minimum height of the message window in pixels (before DPI scaling).
+	 * The window grows to fit larger text or more lines. 0 = fit to text.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Message Window",
 		meta = (ClampMin = "0", UIMin = "0"))
@@ -261,6 +270,7 @@ struct SEQUENCERSUBTITLES_API FSubtitleAppearance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Speaker Name")
 	FLinearColor SpeakerNameColor = FLinearColor(1.0f, 0.85f, 0.0f, 1.0f);
 
+	/** Font size of the speaker name, in the same units as FontSize. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Speaker Name",
 		meta = (ClampMin = "8", ClampMax = "128"))
 	int32 SpeakerNameFontSize = 20;

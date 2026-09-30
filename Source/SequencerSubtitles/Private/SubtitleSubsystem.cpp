@@ -16,8 +16,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Images/SImage.h"
 #include "SSubtitleSeparatorLine.h"
-#include "Fonts/FontMeasure.h"
-#include "Framework/Application/SlateApplication.h"
+#include "Engine/Font.h"
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformTime.h"
 
@@ -131,8 +130,10 @@ void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
 		.AutoWrapText(true)
 		.Justification(ETextJustify::Center);
 
-	// Build SOverlay
+	// Build SOverlay (typewriter sizer at the back; it only reserves space)
+	Slot.TypewriterSizerOverlay = SNew(SOverlay).Visibility(EVisibility::HitTestInvisible);
 	Slot.SubtitleTextOverlay = SNew(SOverlay);
+	Slot.SubtitleTextOverlay->AddSlot()[ Slot.TypewriterSizerOverlay.ToSharedRef() ];
 	for (int32 i = FSubtitleSlot::NumBlurSteps - 1; i >= 0; --i)
 		Slot.SubtitleTextOverlay->AddSlot()[ Slot.OuterBlurTextBlocks[i].ToSharedRef() ];
 	Slot.SubtitleTextOverlay->AddSlot()[ Slot.OuterOutlineTextBlock.ToSharedRef() ];
@@ -190,7 +191,7 @@ void USubtitleSubsystem::CreateSlotWidget(uint32 SlotID, FSubtitleSlot& Slot)
 		[
 			Slot.EntryVBox.ToSharedRef()
 		];
-	Slot.DragHandle->SetOnDragFinished(FOnSubtitleDragFinished::CreateLambda(
+	Slot.DragHandle->SetOnDragFinished(FOnSubtitleDragFinished::CreateWeakLambda(this,
 		[this, SlotID](FVector2D NewOffset)
 		{
 			OnSlotDragOffsetChanged(SlotID, NewOffset);
@@ -282,8 +283,10 @@ void USubtitleSubsystem::AddToViewport()
 
 	UWorld* World = GetWorld();
 	bIsEditorViewport = false;
+	HostGameViewport.Reset();
 
 #if WITH_EDITOR
+	HostEditorViewport.Reset();
 	if (World && (World->WorldType == EWorldType::Editor || World->WorldType == EWorldType::EditorPreview))
 	{
 		if (FModuleManager::Get().IsModuleLoaded("LevelEditor"))
@@ -296,6 +299,7 @@ void USubtitleSubsystem::AddToViewport()
 				if (ActiveLevelViewport.IsValid() && DPIScalerWidget.IsValid())
 				{
 					ActiveLevelViewport->AddOverlayWidget(DPIScalerWidget.ToSharedRef());
+					HostEditorViewport = ActiveLevelViewport;
 					bAddedToViewport = true;
 					bIsEditorViewport = true;
 					return;
@@ -305,9 +309,15 @@ void USubtitleSubsystem::AddToViewport()
 	}
 #endif
 
-	if (GEngine && GEngine->GameViewport && DPIScalerWidget.IsValid())
+	UGameViewportClient* GameViewport = World ? World->GetGameViewport() : nullptr;
+	if (!GameViewport && GEngine)
 	{
-		GEngine->GameViewport->AddViewportWidgetContent(DPIScalerWidget.ToSharedRef(), 100);
+		GameViewport = GEngine->GameViewport;
+	}
+	if (GameViewport && DPIScalerWidget.IsValid())
+	{
+		GameViewport->AddViewportWidgetContent(DPIScalerWidget.ToSharedRef(), 100);
+		HostGameViewport = GameViewport;
 		bAddedToViewport = true;
 	}
 }
@@ -322,30 +332,29 @@ void USubtitleSubsystem::RemoveFromViewport()
 #if WITH_EDITOR
 	if (bIsEditorViewport)
 	{
-		// Try to remove from the editor viewport (module may already be unloaded during shutdown)
+		// Remove from the viewport it was added to, not the currently active one
+		// (module may already be unloaded during shutdown)
 		if (FModuleManager::Get().IsModuleLoaded("LevelEditor"))
 		{
-			FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
-			TSharedPtr<ILevelEditor> LevelEditor = LevelEditorModule.GetFirstLevelEditor();
-			if (LevelEditor.IsValid())
+			TSharedPtr<IAssetViewport> EditorViewport = HostEditorViewport.Pin();
+			if (EditorViewport.IsValid() && DPIScalerWidget.IsValid())
 			{
-				TSharedPtr<IAssetViewport> ActiveLevelViewport = LevelEditor->GetActiveViewportInterface();
-				if (ActiveLevelViewport.IsValid() && DPIScalerWidget.IsValid())
-				{
-					ActiveLevelViewport->RemoveOverlayWidget(DPIScalerWidget.ToSharedRef());
-				}
+				EditorViewport->RemoveOverlayWidget(DPIScalerWidget.ToSharedRef());
 			}
 		}
-		// Always reset the flag whether or not removal succeeded (viewport may already be gone)
+		// Always reset whether or not removal succeeded (viewport may already be gone)
+		HostEditorViewport.Reset();
 		bAddedToViewport = false;
 		return;
 	}
 #endif
 
-	if (GEngine && GEngine->GameViewport && DPIScalerWidget.IsValid())
+	UGameViewportClient* GameViewport = HostGameViewport.Get();
+	if (GameViewport && DPIScalerWidget.IsValid())
 	{
-		GEngine->GameViewport->RemoveViewportWidgetContent(DPIScalerWidget.ToSharedRef());
+		GameViewport->RemoveViewportWidgetContent(DPIScalerWidget.ToSharedRef());
 	}
+	HostGameViewport.Reset();
 	bAddedToViewport = false;
 }
 
@@ -428,8 +437,6 @@ void USubtitleSubsystem::NotifySubtitleStarted(uint32 SlotID, const FText& InSub
 	Slot.BarColor            = InBarColor;
 	Slot.Appearance          = InAppearance;
 	Slot.bTypewriterActive   = false;
-	Slot.TypewriterFullWidth = 0.f;
-	Slot.TypewriterFullHeight= 0.f;
 	Slot.LastSoundCharIndex  = -1;
 	Slot.LastSoundPlayTime   = 0.0;
 	Slot.CurrentPageIndex    = 0;
@@ -444,10 +451,9 @@ void USubtitleSubsystem::NotifySubtitleStarted(uint32 SlotID, const FText& InSub
 	else
 	{
 		// Reset typewriter sizing if reusing an existing widget
-		if (Slot.TypewriterSizerBox.IsValid())
+		if (Slot.TypewriterSizerOverlay.IsValid())
 		{
-			Slot.TypewriterSizerBox->SetWidthOverride(FOptionalSize());
-			Slot.TypewriterSizerBox->SetHeightOverride(FOptionalSize());
+			Slot.TypewriterSizerOverlay->ClearChildren();
 		}
 		if (Slot.SubtitleBorder.IsValid())
 		{
@@ -470,8 +476,6 @@ void USubtitleSubsystem::NotifySubtitleStarted(uint32 SlotID, const FText& InSub
 		if (Slot.InnerBlurTextBlocks[i].IsValid()) Slot.InnerBlurTextBlocks[i]->SetText(InSubtitleText);
 		if (Slot.OuterBlurTextBlocks[i].IsValid()) Slot.OuterBlurTextBlocks[i]->SetText(InSubtitleText);
 	}
-
-	PreMeasureSlotText(Slot, InSubtitleText, InAppearance);
 
 	WidgetOverlay->SetVisibility(EVisibility::SelfHitTestInvisible);
 	StartSlotAnimation(Slot, SlotID, InAppearance.EntranceType, InAppearance.EntranceDuration, false);
@@ -658,34 +662,27 @@ void USubtitleSubsystem::InitTypewriterState(FSubtitleSlot& Slot, uint32 SlotID,
 		Slot.TypewriterPageCharStarts.Add(0);
 	}
 
-	// Measure full width for SBox anchoring (include outline extent for accuracy)
-	if (FSlateApplication::IsInitialized())
+	// Reserve the final layout: a transparent copy of every page sits behind the visible text,
+	// so the box is as wide as the widest line and as tall as the tallest page. Slate lays these
+	// out at the actual render scale and re-wraps them on resize (include outline extent).
+	if (Slot.TypewriterSizerOverlay.IsValid() && Slot.SubtitleBorder.IsValid())
 	{
-		const TSharedRef<FSlateFontMeasure> FM =
-			FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+		Slot.TypewriterSizerOverlay->ClearChildren();
 
-		FSlateFontInfo MeasureFont = Slot.FontInfo;
-		MeasureFont.OutlineSettings.OutlineSize = GetMaxOutlinePixels(Slot.Appearance);
+		FSlateFontInfo SizerFont = Slot.FontInfo;
+		SizerFont.OutlineSettings.OutlineSize  = GetMaxOutlinePixels(Slot.Appearance);
+		SizerFont.OutlineSettings.OutlineColor = FLinearColor::Transparent;
 
-		for (const FString& Line : AllLines)
+		for (const FString& Page : Slot.TypewriterPages)
 		{
-			const float LineWidth = FM->Measure(FText::FromString(Line), MeasureFont).X;
-			Slot.TypewriterFullWidth = FMath::Max(Slot.TypewriterFullWidth, LineWidth);
-		}
-
-		const int32 DisplayLineCount = (MaxLines > 0)
-			? FMath::Min(MaxLines, AllLines.Num())
-			: AllLines.Num();
-		const float LineHeight    = FM->GetMaxCharacterHeight(MeasureFont, 1.0f);
-		Slot.TypewriterFullHeight = LineHeight * static_cast<float>(DisplayLineCount);
-	}
-
-	if (Slot.TypewriterSizerBox.IsValid() && Slot.TypewriterFullWidth > 0.f)
-	{
-		Slot.TypewriterSizerBox->SetWidthOverride(Slot.TypewriterFullWidth);
-		if (Slot.TypewriterFullHeight > 0.f)
-		{
-			Slot.TypewriterSizerBox->SetHeightOverride(Slot.TypewriterFullHeight);
+			Slot.TypewriterSizerOverlay->AddSlot()
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(Page))
+				.Font(SizerFont)
+				.ColorAndOpacity(FLinearColor::Transparent)
+				.AutoWrapText(true)
+			];
 		}
 		Slot.SubtitleBorder->SetHAlign(HAlign_Center);
 	}
@@ -785,7 +782,7 @@ void USubtitleSubsystem::ShowMessageEx(const FText& Text, float Duration, const 
 		{
 			Slot.AutoHideTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
 				0.0f,
-				FWidgetActiveTimerDelegate::CreateLambda(
+				FWidgetActiveTimerDelegate::CreateWeakLambda(this,
 					[this](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
 					{
 						return TickAutoHide(InCurrentTime, InDeltaTime);
@@ -857,6 +854,7 @@ void USubtitleSubsystem::Deinitialize()
 		{
 			Slot.SubtitleBorder->UnRegisterActiveTimer(Slot.AutoHideTimerHandle.ToSharedRef());
 		}
+		StopTremble(Slot);
 	}
 	ActiveSlots.Empty();
 	SlotSoundCache.Empty();
@@ -940,6 +938,19 @@ void USubtitleSubsystem::OnSlotDragOffsetChanged(uint32 SlotID, FVector2D NewOff
 
 namespace
 {
+	/**
+	 * Build the font for subtitle / speaker text. FSlateFontInfo needs a UFont (font provider);
+	 * any other asset (e.g. a Font Face) falls back to the engine default font.
+	 */
+	static FSlateFontInfo MakeSubtitleFont(const FSubtitleAppearance& InAppearance, int32 InSize, FName DefaultTypeface)
+	{
+		if (const UFont* Font = Cast<UFont>(InAppearance.FontAsset.LoadSynchronous()))
+		{
+			return FSlateFontInfo(Font, static_cast<float>(InSize));
+		}
+		return FCoreStyle::GetDefaultFontStyle(DefaultTypeface, static_cast<float>(InSize));
+	}
+
 	/** Apply window background (solid / rounded / image) to a slot's SubtitleBorder. */
 	static void ApplyWindowBackground(FSubtitleSlot& Slot, const FSubtitleAppearance& InAppearance)
 	{
@@ -1159,10 +1170,7 @@ namespace
 			}
 		}
 
-		UObject* LoadedFont = InAppearance.FontAsset.LoadSynchronous();
-		const FSlateFontInfo FontInfo = LoadedFont
-			? FSlateFontInfo(LoadedFont, static_cast<float>(InAppearance.FontSize))
-			: FCoreStyle::GetDefaultFontStyle("Regular", InAppearance.FontSize);
+		const FSlateFontInfo FontInfo = MakeSubtitleFont(InAppearance, InAppearance.FontSize, TEXT("Regular"));
 
 		Slot.FontInfo = FontInfo;
 
@@ -1233,12 +1241,13 @@ void USubtitleSubsystem::ApplyAppearanceToSlot(FSubtitleSlot& Slot, const FSubti
 
 	ApplyWindowBackground(Slot, InAppearance);
 
+	// MessageWindowHeight is a minimum: the window still grows to fit larger text or more lines
 	if (Slot.MessageWindowBox.IsValid())
 	{
 		if (InAppearance.MessageWindowHeight > 0.0f)
-			Slot.MessageWindowBox->SetHeightOverride(InAppearance.MessageWindowHeight);
+			Slot.MessageWindowBox->SetMinDesiredHeight(InAppearance.MessageWindowHeight);
 		else
-			Slot.MessageWindowBox->SetHeightOverride(FOptionalSize());
+			Slot.MessageWindowBox->SetMinDesiredHeight(FOptionalSize());
 	}
 
 	ApplyTextStyling(Slot, InAppearance);
@@ -1271,10 +1280,7 @@ namespace
 
 		Slot.SpeakerTextBlock->SetText(InSpeakerName);
 
-		UObject* LoadedFont = InAppearance.FontAsset.LoadSynchronous();
-		const FSlateFontInfo SpeakerFont = LoadedFont
-			? FSlateFontInfo(LoadedFont, InAppearance.SpeakerNameFontSize)
-			: FCoreStyle::GetDefaultFontStyle("Bold", InAppearance.SpeakerNameFontSize);
+		const FSlateFontInfo SpeakerFont = MakeSubtitleFont(InAppearance, InAppearance.SpeakerNameFontSize, TEXT("Bold"));
 
 		// Set text on all speaker outline layers
 		if (Slot.SpeakerInnerOutlineTextBlock.IsValid()) Slot.SpeakerInnerOutlineTextBlock->SetText(InSpeakerName);
@@ -1447,46 +1453,6 @@ void USubtitleSubsystem::ApplySpeakerAndSeparatorToSlot(FSubtitleSlot& Slot,
 }
 
 // ---------------------------------------------------------------------------
-// PreMeasureSlotText — prevents layout flicker on first frame
-// ---------------------------------------------------------------------------
-
-void USubtitleSubsystem::PreMeasureSlotText(FSubtitleSlot& Slot, const FText& InSubtitleText,
-	const FSubtitleAppearance& InAppearance)
-{
-	if (!Slot.TypewriterSizerBox.IsValid() || !Slot.SubtitleBorder.IsValid()) { return; }
-	if (!FSlateApplication::IsInitialized()) { return; }
-
-	TArray<FString> Lines;
-	InSubtitleText.ToString().ParseIntoArray(Lines, TEXT("\n"), /*bCullEmpty=*/false);
-	if (Lines.Num() <= 1) { return; }
-
-	const TSharedRef<FSlateFontMeasure> FM =
-		FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
-
-	// Use a measurement font that includes the max outline extent for accurate sizing
-	FSlateFontInfo MeasureFont = Slot.FontInfo;
-	MeasureFont.OutlineSettings.OutlineSize = GetMaxOutlinePixels(InAppearance);
-
-	const float LineHeight = FM->GetMaxCharacterHeight(MeasureFont, 1.0f);
-	Slot.TypewriterSizerBox->SetHeightOverride(LineHeight * static_cast<float>(Lines.Num()));
-
-	if (InAppearance.TextAlignment != ESubtitleTextAlignment::Left)
-	{
-		float MaxLineWidth = 0.f;
-		for (const FString& Line : Lines)
-		{
-			MaxLineWidth = FMath::Max(MaxLineWidth, FM->Measure(FText::FromString(Line), MeasureFont).X);
-		}
-		if (MaxLineWidth > 0.f)
-		{
-			Slot.TypewriterSizerBox->SetWidthOverride(MaxLineWidth);
-			Slot.SubtitleBorder->SetHAlign(
-				InAppearance.TextAlignment == ESubtitleTextAlignment::Right ? HAlign_Right : HAlign_Center);
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // StartSlotAnimation / ApplySlotAnimationAlpha / TickSlotAnimation
 // ---------------------------------------------------------------------------
 
@@ -1517,37 +1483,24 @@ void USubtitleSubsystem::StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID,
 	Slot.bAnimating   = true;
 	Slot.bExitAnim    = bReverse;
 
-	// Compute viewport-relative slide offsets
+	// Compute viewport-relative slide offsets in Slate units.
+	// Viewport pixels per Slate unit = DPI curve value, both in game (engine game layer)
+	// and in the editor viewport (GetSubtitleDPIScale).
 	Slot.SlideOffsetX = 2000.f;
 	Slot.SlideOffsetY = 1200.f;
-	if (GEngine && GEngine->GameViewport && !bIsEditorViewport)
+	const FIntPoint VPSize = GetHostViewportSize();
+	if (VPSize.X > 0 && VPSize.Y > 0)
 	{
-		FVector2D VPSize;
-		GEngine->GameViewport->GetViewportSize(VPSize);
-		float Scale = GetSubtitleDPIScale();
-		if (Scale < 0.01f) Scale = 1.0f;
-		Slot.SlideOffsetX = static_cast<float>(VPSize.X) / Scale;
-		Slot.SlideOffsetY = static_cast<float>(VPSize.Y) / Scale;
-	}
-#if WITH_EDITOR
-	else if (bIsEditorViewport && FModuleManager::Get().IsModuleLoaded("LevelEditor"))
-	{
-		FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
-		TSharedPtr<ILevelEditor> LevelEditor = LevelEditorModule.GetFirstLevelEditor();
-		if (LevelEditor.IsValid())
+		if (const UUserInterfaceSettings* UISettings = GetDefault<UUserInterfaceSettings>())
 		{
-			TSharedPtr<IAssetViewport> ActiveLevelViewport = LevelEditor->GetActiveViewportInterface();
-			if (ActiveLevelViewport.IsValid() && ActiveLevelViewport->GetActiveViewport())
+			const float UIScale = UISettings->GetDPIScaleBasedOnSize(VPSize);
+			if (UIScale > 0.01f)
 			{
-				FIntPoint EdSize = ActiveLevelViewport->GetActiveViewport()->GetSizeXY();
-				float Scale = GetSubtitleDPIScale();
-				if (Scale < 0.01f) Scale = 1.0f;
-				Slot.SlideOffsetX = static_cast<float>(EdSize.X) / Scale;
-				Slot.SlideOffsetY = static_cast<float>(EdSize.Y) / Scale;
+				Slot.SlideOffsetX = static_cast<float>(VPSize.X) / UIScale;
+				Slot.SlideOffsetY = static_cast<float>(VPSize.Y) / UIScale;
 			}
 		}
 	}
-#endif
 
 	ApplySlotAnimationAlpha(Slot, bReverse ? 1.0f : 0.0f);
 
@@ -1560,7 +1513,7 @@ void USubtitleSubsystem::StartSlotAnimation(FSubtitleSlot& Slot, uint32 SlotID,
 
 	Slot.AnimTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
 		0.0f,
-		FWidgetActiveTimerDelegate::CreateLambda(
+		FWidgetActiveTimerDelegate::CreateWeakLambda(this,
 			[this, SlotID](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
 			{
 				return TickSlotAnimation(SlotID, InCurrentTime, InDeltaTime);
@@ -1687,7 +1640,7 @@ void USubtitleSubsystem::StartTremble(FSubtitleSlot& Slot, uint32 SlotID)
 
 	Slot.TrembleTimerHandle = Slot.SubtitleBorder->RegisterActiveTimer(
 		0.0f,
-		FWidgetActiveTimerDelegate::CreateLambda(
+		FWidgetActiveTimerDelegate::CreateWeakLambda(this,
 			[this, SlotID](double InCurrentTime, float InDeltaTime) -> EActiveTimerReturnType
 			{
 				return TickTremble(SlotID, InCurrentTime, InDeltaTime);
@@ -1730,11 +1683,12 @@ EActiveTimerReturnType USubtitleSubsystem::TickTremble(uint32 SlotID, double InC
 	// During Slide entrance/exit, add tremble on top of the current slide offset.
 	// During Scale or Fade animations (or no animation), just apply tremble alone.
 	FVector2D BaseOffset = FVector2D::ZeroVector;
-	if (Slot.bAnimating && !Slot.bExitAnim)
+	if (Slot.bAnimating)
 	{
-		// Reconstruct the current slide offset from animation state
+		// Reconstruct the current slide offset from animation state (same easing as TickSlotAnimation)
 		const float Alpha = FMath::Clamp(Slot.AnimElapsed / Slot.AnimDuration, 0.0f, 1.0f);
-		const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.0f);
+		const float DirectionalAlpha = Slot.bExitAnim ? (1.0f - Alpha) : Alpha;
+		const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, DirectionalAlpha, 2.0f);
 		switch (Slot.AnimType)
 		{
 		case ESubtitleEntranceType::SlideLeft:   BaseOffset.X = -Slot.SlideOffsetX * (1.f - EasedAlpha); break;
@@ -1756,46 +1710,59 @@ EActiveTimerReturnType USubtitleSubsystem::TickTremble(uint32 SlotID, double InC
 }
 
 // ---------------------------------------------------------------------------
-// GetSubtitleDPIScale
+// GetHostViewportSize / GetSubtitleDPIScale
 // ---------------------------------------------------------------------------
 
-float USubtitleSubsystem::GetSubtitleDPIScale() const
+FIntPoint USubtitleSubsystem::GetHostViewportSize() const
 {
 #if WITH_EDITOR
-	if (bIsEditorViewport && FModuleManager::Get().IsModuleLoaded("LevelEditor"))
+	if (bIsEditorViewport)
 	{
-		FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
-		TSharedPtr<ILevelEditor> LevelEditor = LevelEditorModule.GetFirstLevelEditor();
-		if (LevelEditor.IsValid())
+		const TSharedPtr<IAssetViewport> EditorViewport = HostEditorViewport.Pin();
+		if (EditorViewport.IsValid() && EditorViewport->GetActiveViewport())
 		{
-			TSharedPtr<IAssetViewport> ActiveLevelViewport = LevelEditor->GetActiveViewportInterface();
-			if (ActiveLevelViewport.IsValid() && ActiveLevelViewport->GetActiveViewport())
-			{
-				FIntPoint EdSize = ActiveLevelViewport->GetActiveViewport()->GetSizeXY();
-				if (EdSize.X > 0 && EdSize.Y > 0)
-				{
-					if (const UUserInterfaceSettings* UISettings = GetDefault<UUserInterfaceSettings>())
-					{
-						return UISettings->GetDPIScaleBasedOnSize(EdSize);
-					}
-				}
-			}
+			return EditorViewport->GetActiveViewport()->GetSizeXY();
 		}
+		return FIntPoint::ZeroValue;
 	}
 #endif
 
-	if (GEngine && GEngine->GameViewport)
+	if (UGameViewportClient* GameViewport = HostGameViewport.Get())
 	{
 		FVector2D VPSize;
-		GEngine->GameViewport->GetViewportSize(VPSize);
-		if (VPSize.X > 0 && VPSize.Y > 0)
-		{
-			if (const UUserInterfaceSettings* UISettings = GetDefault<UUserInterfaceSettings>())
-			{
-				return UISettings->GetDPIScaleBasedOnSize(FIntPoint((int32)VPSize.X, (int32)VPSize.Y));
-			}
-		}
+		GameViewport->GetViewportSize(VPSize);
+		return FIntPoint(FMath::RoundToInt(VPSize.X), FMath::RoundToInt(VPSize.Y));
+	}
+	return FIntPoint::ZeroValue;
+}
+
+float USubtitleSubsystem::GetSubtitleDPIScale() const
+{
+	// Game / PIE: viewport content already sits inside the engine's game layer DPI scaler
+	// (same scale UMG uses), so applying the DPI curve here again would square it.
+	if (!bIsEditorViewport)
+	{
+		return 1.0f;
 	}
 
-	return 1.0f;
+	// Editor viewport: nothing applies the DPI curve, so do it here like the game layer does:
+	// curve value for the viewport's pixel size, divided by the scale Slate already applies
+	// above us (OS display scaling).
+	const FIntPoint VPSize = GetHostViewportSize();
+	const UUserInterfaceSettings* UISettings = GetDefault<UUserInterfaceSettings>();
+	if (VPSize.X <= 0 || VPSize.Y <= 0 || !UISettings)
+	{
+		return 1.0f;
+	}
+
+	float Scale = UISettings->GetDPIScaleBasedOnSize(VPSize);
+	if (DPIScalerWidget.IsValid())
+	{
+		const float ParentScale = DPIScalerWidget->GetTickSpaceGeometry().GetAccumulatedLayoutTransform().GetScale();
+		if (ParentScale > KINDA_SMALL_NUMBER)
+		{
+			Scale /= ParentScale;
+		}
+	}
+	return Scale;
 }

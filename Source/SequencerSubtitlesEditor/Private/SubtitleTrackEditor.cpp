@@ -24,6 +24,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Serialization/JsonReader.h"
+#include "Serialization/Csv/CsvParser.h"
 #if ENGINE_MINOR_VERSION >= 7
 #include "MVVM/Views/ViewUtilities.h"
 #endif
@@ -138,14 +139,6 @@ FReply FSubtitleSectionUI::OnSectionDoubleClicked(const FGeometry& SectionGeomet
 									const FScopedTransaction Transaction(LOCTEXT("EditSubtitleText_Transaction", "Edit Subtitle Text"));
 									Section->Modify();
 									Section->SubtitleText = InText;
-
-									// 行数を自動カウントして MaxLinesPerPage・MessageWindowHeight に反映
-									TArray<FString> Lines;
-									InText.ToString().ParseIntoArrayLines(Lines, false);
-									const int32 LineCount = FMath::Max(1, Lines.Num());
-									Section->bOverrideAppearance = true;
-									Section->AppearanceOverride.MaxLinesPerPage = LineCount;
-									Section->AppearanceOverride.MessageWindowHeight = 0.0f;
 								}
 							}
 							FSlateApplication::Get().DismissAllMenus();
@@ -617,58 +610,9 @@ static FLinearColor JsonToLinearColor(const TSharedPtr<FJsonObject>& Obj, const 
 
 static TSharedRef<FJsonObject> AppearanceToJson(const FSubtitleAppearance& A)
 {
+	// Every UPROPERTY of FSubtitleAppearance is written, so new settings are exported automatically
 	TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
-
-	if (!A.FontAsset.IsNull())
-	{
-		Obj->SetStringField(TEXT("fontAsset"), A.FontAsset.ToString());
-	}
-	Obj->SetNumberField(TEXT("fontSize"), A.FontSize);
-	Obj->SetObjectField(TEXT("textColor"), LinearColorToJson(A.TextColor));
-	Obj->SetObjectField(TEXT("backgroundColor"), LinearColorToJson(A.BackgroundColor));
-
-	Obj->SetStringField(TEXT("verticalPosition"), StaticEnum<ESubtitleVerticalPosition>()->GetNameStringByValue(static_cast<int64>(A.VerticalPosition)));
-	Obj->SetStringField(TEXT("horizontalPosition"), StaticEnum<ESubtitleHorizontalPosition>()->GetNameStringByValue(static_cast<int64>(A.HorizontalPosition)));
-	Obj->SetStringField(TEXT("textAlignment"), StaticEnum<ESubtitleTextAlignment>()->GetNameStringByValue(static_cast<int64>(A.TextAlignment)));
-
-	// ScreenPadding
-	{
-		TSharedRef<FJsonObject> Pad = MakeShared<FJsonObject>();
-		Pad->SetNumberField(TEXT("left"), A.ScreenPadding.Left);
-		Pad->SetNumberField(TEXT("top"), A.ScreenPadding.Top);
-		Pad->SetNumberField(TEXT("right"), A.ScreenPadding.Right);
-		Pad->SetNumberField(TEXT("bottom"), A.ScreenPadding.Bottom);
-		Obj->SetObjectField(TEXT("screenPadding"), Pad);
-	}
-
-	Obj->SetStringField(TEXT("entranceType"), StaticEnum<ESubtitleEntranceType>()->GetNameStringByValue(static_cast<int64>(A.EntranceType)));
-	Obj->SetNumberField(TEXT("entranceDuration"), A.EntranceDuration);
-
-	if (!A.TypewriterSound.IsNull())
-	{
-		Obj->SetStringField(TEXT("typewriterSound"), A.TypewriterSound.ToString());
-	}
-	Obj->SetNumberField(TEXT("typewriterSoundInterval"), A.TypewriterSoundInterval);
-	Obj->SetNumberField(TEXT("maxLinesPerPage"), A.MaxLinesPerPage);
-	Obj->SetNumberField(TEXT("maxCharsPerLine"), A.MaxCharsPerLine);
-
-	Obj->SetObjectField(TEXT("speakerNameColor"), LinearColorToJson(A.SpeakerNameColor));
-	Obj->SetNumberField(TEXT("speakerNameFontSize"), A.SpeakerNameFontSize);
-
-	Obj->SetBoolField(TEXT("showSeparatorLine"), A.bShowSeparatorLine);
-	Obj->SetBoolField(TEXT("useLineImage"), A.bUseLineImage);
-	if (!A.LineImage.IsNull())
-	{
-		Obj->SetStringField(TEXT("lineImage"), A.LineImage.ToString());
-	}
-	Obj->SetObjectField(TEXT("separatorLineColor"), LinearColorToJson(A.SeparatorLineColor));
-	Obj->SetNumberField(TEXT("separatorLineThickness"), A.SeparatorLineThickness);
-	Obj->SetNumberField(TEXT("messageWindowHeight"), A.MessageWindowHeight);
-
-	Obj->SetBoolField(TEXT("overrideExitAnimation"), A.bOverrideExitAnimation);
-	Obj->SetStringField(TEXT("exitType"), StaticEnum<ESubtitleEntranceType>()->GetNameStringByValue(static_cast<int64>(A.ExitType)));
-	Obj->SetNumberField(TEXT("exitDuration"), A.ExitDuration);
-
+	FJsonObjectConverter::UStructToJsonObject(FSubtitleAppearance::StaticStruct(), &A, Obj);
 	return Obj;
 }
 
@@ -677,74 +621,14 @@ static FSubtitleAppearance JsonToAppearance(const TSharedPtr<FJsonObject>& Obj)
 	FSubtitleAppearance A;
 	if (!Obj.IsValid()) return A;
 
-	FString Str;
-	if (Obj->TryGetStringField(TEXT("fontAsset"), Str))
-	{
-		A.FontAsset = TSoftObjectPtr<UObject>(FSoftObjectPath(Str));
-	}
-	A.FontSize = Obj->GetIntegerField(TEXT("fontSize"));
-	A.TextColor = JsonToLinearColor(Obj->GetObjectField(TEXT("textColor")));
-	A.BackgroundColor = JsonToLinearColor(Obj->GetObjectField(TEXT("backgroundColor")), FLinearColor(0, 0, 0, 0));
+	// Keys missing from the JSON keep their default values
+	FJsonObjectConverter::JsonObjectToUStruct(Obj.ToSharedRef(), FSubtitleAppearance::StaticStruct(), &A);
 
-	if (Obj->TryGetStringField(TEXT("verticalPosition"), Str))
-	{
-		int64 Val = StaticEnum<ESubtitleVerticalPosition>()->GetValueByNameString(Str);
-		if (Val != INDEX_NONE) A.VerticalPosition = static_cast<ESubtitleVerticalPosition>(Val);
-	}
-	if (Obj->TryGetStringField(TEXT("horizontalPosition"), Str))
-	{
-		int64 Val = StaticEnum<ESubtitleHorizontalPosition>()->GetValueByNameString(Str);
-		if (Val != INDEX_NONE) A.HorizontalPosition = static_cast<ESubtitleHorizontalPosition>(Val);
-	}
-	if (Obj->TryGetStringField(TEXT("textAlignment"), Str))
-	{
-		int64 Val = StaticEnum<ESubtitleTextAlignment>()->GetValueByNameString(Str);
-		if (Val != INDEX_NONE) A.TextAlignment = static_cast<ESubtitleTextAlignment>(Val);
-	}
-
-	if (const TSharedPtr<FJsonObject>* Pad = nullptr; Obj->TryGetObjectField(TEXT("screenPadding"), Pad))
-	{
-		A.ScreenPadding.Left = (*Pad)->GetNumberField(TEXT("left"));
-		A.ScreenPadding.Top = (*Pad)->GetNumberField(TEXT("top"));
-		A.ScreenPadding.Right = (*Pad)->GetNumberField(TEXT("right"));
-		A.ScreenPadding.Bottom = (*Pad)->GetNumberField(TEXT("bottom"));
-	}
-
-	if (Obj->TryGetStringField(TEXT("entranceType"), Str))
-	{
-		int64 Val = StaticEnum<ESubtitleEntranceType>()->GetValueByNameString(Str);
-		if (Val != INDEX_NONE) A.EntranceType = static_cast<ESubtitleEntranceType>(Val);
-	}
-	A.EntranceDuration = Obj->GetNumberField(TEXT("entranceDuration"));
-
-	if (Obj->TryGetStringField(TEXT("typewriterSound"), Str))
-	{
-		A.TypewriterSound = TSoftObjectPtr<USoundBase>(FSoftObjectPath(Str));
-	}
-	A.TypewriterSoundInterval = Obj->GetNumberField(TEXT("typewriterSoundInterval"));
-	A.MaxLinesPerPage = Obj->GetIntegerField(TEXT("maxLinesPerPage"));
-	A.MaxCharsPerLine = Obj->GetIntegerField(TEXT("maxCharsPerLine"));
-
-	A.SpeakerNameColor = JsonToLinearColor(Obj->GetObjectField(TEXT("speakerNameColor")), FLinearColor(1, 0.85f, 0, 1));
-	A.SpeakerNameFontSize = Obj->GetIntegerField(TEXT("speakerNameFontSize"));
-
-	A.bShowSeparatorLine = Obj->GetBoolField(TEXT("showSeparatorLine"));
-	A.bUseLineImage = Obj->GetBoolField(TEXT("useLineImage"));
-	if (Obj->TryGetStringField(TEXT("lineImage"), Str))
-	{
-		A.LineImage = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(Str));
-	}
-	A.SeparatorLineColor = JsonToLinearColor(Obj->GetObjectField(TEXT("separatorLineColor")), FLinearColor(0.8f, 0.7f, 0.3f, 0.8f));
-	A.SeparatorLineThickness = Obj->GetNumberField(TEXT("separatorLineThickness"));
-	A.MessageWindowHeight = Obj->GetNumberField(TEXT("messageWindowHeight"));
-
-	A.bOverrideExitAnimation = Obj->GetBoolField(TEXT("overrideExitAnimation"));
-	if (Obj->TryGetStringField(TEXT("exitType"), Str))
-	{
-		int64 Val = StaticEnum<ESubtitleEntranceType>()->GetValueByNameString(Str);
-		if (Val != INDEX_NONE) A.ExitType = static_cast<ESubtitleEntranceType>(Val);
-	}
-	A.ExitDuration = Obj->GetNumberField(TEXT("exitDuration"));
+	// v1.3 and earlier wrote these bools without the "b" prefix
+	bool bLegacyValue = false;
+	if (Obj->TryGetBoolField(TEXT("showSeparatorLine"), bLegacyValue))     { A.bShowSeparatorLine     = bLegacyValue; }
+	if (Obj->TryGetBoolField(TEXT("useLineImage"), bLegacyValue))          { A.bUseLineImage          = bLegacyValue; }
+	if (Obj->TryGetBoolField(TEXT("overrideExitAnimation"), bLegacyValue)) { A.bOverrideExitAnimation = bLegacyValue; }
 
 	return A;
 }
@@ -880,60 +764,22 @@ void FSubtitleTrackEditor::ImportSectionsFromClipboardCSV(UMovieSceneTrack* Trac
 
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
 
-	TArray<FString> Lines;
-	ClipboardText.ParseIntoArrayLines(Lines, false);
-	if (Lines.Num() < 2) return; // header + at least one row
+	// FCsvParser handles quoted fields containing commas, newlines and "" escapes
+	const FCsvParser Parser(ClipboardText);
+	const FCsvParser::FRows& Rows = Parser.GetRows();
+	if (Rows.Num() < 2) return; // header + at least one row
 
 	// Skip header line
 	const FScopedTransaction Transaction(LOCTEXT("ImportCSV_Transaction", "Import Subtitle Sections from CSV"));
 	Track->Modify();
 
-	for (int32 i = 1; i < Lines.Num(); ++i)
+	for (int32 i = 1; i < Rows.Num(); ++i)
 	{
-		const FString& Line = Lines[i].TrimStartAndEnd();
-		if (Line.IsEmpty()) continue;
-
-		// Simple CSV parse (handles quoted fields)
 		TArray<FString> Fields;
-		FString Current;
-		bool bInQuotes = false;
-		for (int32 ci = 0; ci < Line.Len(); ++ci)
+		for (const TCHAR* Cell : Rows[i])
 		{
-			const TCHAR Ch = Line[ci];
-			if (bInQuotes)
-			{
-				if (Ch == TEXT('"') && ci + 1 < Line.Len() && Line[ci + 1] == TEXT('"'))
-				{
-					Current += TEXT('"');
-					++ci;
-				}
-				else if (Ch == TEXT('"'))
-				{
-					bInQuotes = false;
-				}
-				else
-				{
-					Current += Ch;
-				}
-			}
-			else
-			{
-				if (Ch == TEXT('"'))
-				{
-					bInQuotes = true;
-				}
-				else if (Ch == TEXT(','))
-				{
-					Fields.Add(Current);
-					Current.Empty();
-				}
-				else
-				{
-					Current += Ch;
-				}
-			}
+			Fields.Add(FString(Cell));
 		}
-		Fields.Add(Current);
 
 		if (Fields.Num() < 2) continue;
 
@@ -1248,98 +1094,6 @@ void FSubtitleTrackEditor::ImportSectionsFromClipboard(UMovieSceneTrack* Track)
 	}
 
 	SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
-}
-
-// --- Typewriter Toggle ---
-
-void FSubtitleTrackEditor::ToggleTypewriterOnAllSections(UMovieSceneTrack* Track)
-{
-	if (!Track) return;
-
-	const bool bAnyEnabled = HasAnyTypewriterEnabled(Track);
-	const bool bNewValue = !bAnyEnabled;
-
-	const FScopedTransaction Transaction(LOCTEXT("ToggleTypewriter_Transaction", "Toggle Typewriter Effect"));
-	Track->Modify();
-
-	for (UMovieSceneSection* Section : Track->GetAllSections())
-	{
-		if (UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section))
-		{
-			SubSection->Modify();
-			SubSection->bTypewriterEffect = bNewValue;
-		}
-	}
-
-	if (TSharedPtr<ISequencer> SequencerPtr = GetSequencer())
-	{
-		SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::TrackValueChanged);
-	}
-}
-
-bool FSubtitleTrackEditor::HasAnyTypewriterEnabled(UMovieSceneTrack* Track) const
-{
-	if (!Track) return false;
-
-	for (const UMovieSceneSection* Section : Track->GetAllSections())
-	{
-		if (const UMovieSceneSeqSubtitleSection* SubSection = Cast<UMovieSceneSeqSubtitleSection>(Section))
-		{
-			if (SubSection->bTypewriterEffect) return true;
-		}
-	}
-	return false;
-}
-
-// --- Color Presets ---
-
-void FSubtitleTrackEditor::BuildColorPresetMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track)
-{
-	struct FColorPreset
-	{
-		FText Name;
-		FLinearColor Color;
-	};
-
-	static const FColorPreset Presets[] =
-	{
-		{ LOCTEXT("ColorBlue",    "Blue"),    FLinearColor(0.2f, 0.6f, 0.9f, 1.0f) },
-		{ LOCTEXT("ColorOrange",  "Orange"),  FLinearColor(0.9f, 0.5f, 0.1f, 1.0f) },
-		{ LOCTEXT("ColorPink",    "Pink"),    FLinearColor(0.9f, 0.3f, 0.6f, 1.0f) },
-		{ LOCTEXT("ColorGreen",   "Green"),   FLinearColor(0.3f, 0.8f, 0.4f, 1.0f) },
-		{ LOCTEXT("ColorYellow",  "Yellow"),  FLinearColor(0.9f, 0.8f, 0.2f, 1.0f) },
-		{ LOCTEXT("ColorPurple",  "Purple"),  FLinearColor(0.6f, 0.3f, 0.9f, 1.0f) },
-		{ LOCTEXT("ColorRed",     "Red"),     FLinearColor(0.9f, 0.2f, 0.2f, 1.0f) },
-		{ LOCTEXT("ColorCyan",    "Cyan"),    FLinearColor(0.2f, 0.8f, 0.8f, 1.0f) },
-		{ LOCTEXT("ColorWhite",   "White"),   FLinearColor(0.9f, 0.9f, 0.9f, 1.0f) },
-	};
-
-	TWeakObjectPtr<UMovieSceneTrack> WeakTrack = Track;
-
-	MenuBuilder.BeginSection(TEXT("ColorPresets"), LOCTEXT("ColorPresetsHeader", "Track Color"));
-	for (const FColorPreset& Preset : Presets)
-	{
-		MenuBuilder.AddMenuEntry(
-			Preset.Name,
-			FText::GetEmpty(),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this, WeakTrack, Color = Preset.Color]()
-			{
-				if (UMovieSceneSubtitleTrack* SubTrack = Cast<UMovieSceneSubtitleTrack>(WeakTrack.Get()))
-				{
-					const FScopedTransaction Transaction(LOCTEXT("ChangeTrackColor_Transaction", "Change Track Color"));
-					SubTrack->Modify();
-					SubTrack->TrackColor = Color;
-
-					if (TSharedPtr<ISequencer> SequencerPtr = GetSequencer())
-					{
-						SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::TrackValueChanged);
-					}
-				}
-			}))
-		);
-	}
-	MenuBuilder.EndSection();
 }
 
 void FSubtitleTrackEditor::HandleAddSubtitleTrack()

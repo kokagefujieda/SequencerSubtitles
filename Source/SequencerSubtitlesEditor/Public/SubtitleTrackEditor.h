@@ -66,15 +66,6 @@ private:
 	/** Import section texts from clipboard CSV. */
 	void ImportSectionsFromClipboardCSV(UMovieSceneTrack* Track);
 
-	/** Toggle bTypewriterEffect on all sections in the track. */
-	void ToggleTypewriterOnAllSections(UMovieSceneTrack* Track);
-
-	/** Check if any section has typewriter enabled. */
-	bool HasAnyTypewriterEnabled(UMovieSceneTrack* Track) const;
-
-	/** Build the color preset dropdown menu. */
-	void BuildColorPresetMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track);
-
 	/** Export all subtitle tracks in the sequence to clipboard as JSON. */
 	void ExportAllTracksToClipboard();
 

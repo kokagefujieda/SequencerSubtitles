@@ -15,10 +15,12 @@ class STextBlock;
 class SBorder;
 class SBox;
 class USoundBase;
+class UGameViewportClient;
 class SSubtitleSeparatorLine;
 class UMovieSceneSeqSubtitleSection;
 #if WITH_EDITOR
 class SSubtitleDragHandle;
+class IAssetViewport;
 #endif
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
@@ -49,6 +51,8 @@ struct FSubtitleSlot
 	TSharedPtr<SBorder>                SubtitleBorder;
 	TSharedPtr<SBox>                   MessageWindowBox;
 	TSharedPtr<SBox>                   TypewriterSizerBox;
+	/** Transparent copies of every typewriter page; reserve the final text size while characters are revealed. */
+	TSharedPtr<SOverlay>               TypewriterSizerOverlay;
 	FSlateBrush                        CustomSeparatorBrush;
 	FSlateBrush                        WindowBrush;
 	SVerticalBox::FSlot*               SpeakerNameSlot = nullptr;
@@ -82,8 +86,6 @@ struct FSubtitleSlot
 	TArray<int32>                      TypewriterPageCharStarts;
 	int32                              CurrentPageIndex     = 0;
 	bool                               bTypewriterActive    = false;
-	float                              TypewriterFullWidth  = 0.f;
-	float                              TypewriterFullHeight = 0.f;
 	int32                              LastSoundCharIndex   = -1;
 	double                             LastSoundPlayTime    = 0.0;
 
@@ -199,6 +201,11 @@ private:
 	void EnsureSlateWidgets();
 	void AddToViewport();
 	void RemoveFromViewport();
+
+	/** Pixel size of the viewport the subtitles are drawn in (zero if unknown). */
+	FIntPoint GetHostViewportSize() const;
+
+	/** Scale applied by DPIScalerWidget (on top of whatever Slate already applies). */
 	float GetSubtitleDPIScale() const;
 
 	// Per-slot widget management
@@ -227,9 +234,6 @@ private:
 	void OnSlotDragOffsetChanged(uint32 SlotID, FVector2D NewOffset);
 #endif
 
-	// Pre-measure multi-line text for a slot (prevents layout flicker)
-	void PreMeasureSlotText(FSubtitleSlot& Slot, const FText& InSubtitleText, const FSubtitleAppearance& InAppearance);
-
 	// Typewriter sound for a slot
 	void PlayTypewriterSoundForSlot(FSubtitleSlot& Slot, uint32 SlotID, int32 CurrentCharIndex);
 
@@ -244,6 +248,14 @@ private:
 
 	bool bAddedToViewport  = false;
 	bool bIsEditorViewport = false;
+
+	/** Game viewport the widget was added to (game / PIE). */
+	TWeakObjectPtr<UGameViewportClient> HostGameViewport;
+
+#if WITH_EDITOR
+	/** Level editor viewport the widget was added to (the active viewport may change afterwards). */
+	TWeakPtr<IAssetViewport> HostEditorViewport;
+#endif
 
 	// --- Active slots (keyed by section UniqueID; 0 = ShowMessage) ---
 	TMap<uint32, TSharedPtr<FSubtitleSlot>> ActiveSlots;
